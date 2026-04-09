@@ -5,7 +5,7 @@ and performs vectorized TERCOM correlation matching against a DEM.
 
 Topic remappings (applied in launch file):
   altitude        -> /target/mavros/altitude
-  local_odom      -> /target/mavros/local_position/odom
+  eskf_odom       -> /tercom/eskf_node/odom
   distance_sensor -> /scan  (sensor_msgs/LaserScan, single-beam lidar)
   imu_data        -> /target/mavros/imu/data
   eskf_covariance -> /tercom/eskf/pose
@@ -169,7 +169,7 @@ class TERCOMNode(Node):
 
         # Other subscriptions
         self.create_subscription(Imu, 'imu_data', self._cb_imu, sensor_qos)
-        self.create_subscription(Odometry, 'local_odom', self._cb_odom, sensor_qos)
+        self.create_subscription(Odometry, 'eskf_odom', self._cb_odom, 10)
         self.create_subscription(
             PoseWithCovarianceStamped, 'eskf_covariance', self._cb_eskf_cov, 10
         )

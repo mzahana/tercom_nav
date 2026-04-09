@@ -35,7 +35,7 @@ def launch_setup(context, *args, **kwargs):
         parameters=[params_file, {'dem_file': dem_file, **world_params}],
         remappings=[
             ('altitude',         f'/{mavros_ns}/altitude'),
-            ('local_odom',       f'/{mavros_ns}/local_position/odom'),
+            ('eskf_odom',        '/tercom/eskf_node/odom'),
             ('imu_data',         f'/{mavros_ns}/imu/data'),
             ('distance_sensor',  '/scan'),
             ('eskf_covariance',  '/tercom/eskf/pose'),
