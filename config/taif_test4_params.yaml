@@ -1,0 +1,120 @@
+# ==========================================================================
+# TERCOM Navigation Parameters — taif_test4 simulation environment
+#
+# DEM: taif_test4_tercom_dem.tif
+#   CRS:        EPSG:32637 (UTM zone 37N)
+#   Resolution: 5.93 m/pixel
+#   Size:       582 x 579 pixels (~3.45 km x 3.43 km)
+#   Elevation:  1725 – 2011 m MSL
+#
+# Gazebo world origin (spherical_coordinates in world SDF):
+#   lat: 21.2651 °N,  lon: 40.3542 °E,  alt: 1859.7 m MSL
+#
+# This file is a complete parameter set. Pass it as params_file to the
+# launch file and it will fully configure all four nodes without needing
+# tercom_params.yaml to be loaded alongside it.
+# ==========================================================================
+
+/tercom/dem_server_node:
+  ros__parameters:
+    dem_file: "/home/user/shared_volume/PX4-Autopilot/Tools/simulation/gz/models/taif_test4/textures/taif_test4_tercom_dem.tif"
+    dem_metadata_file: ""                  # No sidecar for this DEM
+    nodata_value: -9999.0
+    interpolation_method: "bilinear"
+
+/tercom/tercom_node:
+  ros__parameters:
+    dem_file: "/home/user/shared_volume/PX4-Autopilot/Tools/simulation/gz/models/taif_test4/textures/taif_test4_tercom_dem.tif"
+
+    # Profile collection — auto values resolve to: spacing=5.93m, min_dist=88.95m
+    profile_min_spacing_m: -1.0           # auto = 1.0 * pixel_size (5.93m)
+    profile_max_samples: 20
+    profile_min_distance_m: -1.0          # auto = 15 * pixel_size (88.95m)
+
+    # Search window — sized for cold-start ESKF error of several hundred meters.
+    # Dynamic mode shrinks the window as the filter converges.
+    # 80px * 5.93m = ~475m floor;  200px * 5.93m = ~1186m initial static radius
+    search_radius_pixels: 200
+    search_radius_dynamic: true
+    search_radius_sigma_mult: 3.0
+    search_radius_min_pixels: 80
+    search_radius_max_pixels: 300
+
+    # Quality thresholds
+    mad_reject_threshold: 30.0
+    discrimination_min: 1.02              # straight-line flight: cross-track is ambiguous,
+                                          # disc is naturally ~1.0 even for excellent matches.
+                                          # roughness_min is the primary flat-terrain guard.
+    discrimination_exclusion_radius: 3
+    roughness_min: 5.0
+
+    # Adaptive sampling
+    enable_adaptive_sampling: true
+    adaptive_min_interval_s: 0.5
+    adaptive_max_interval_s: 5.0
+    adaptive_pixels_per_sample: 1.5
+
+    # Rangefinder mounting: gimbal keeps beam vertical — no trig correction needed
+    rangefinder_is_gimbaled: true
+
+    # Sensor sync
+    sync_slop_s: 0.05
+
+    # World origin
+    world_origin_lat: 21.2651
+    world_origin_lon: 40.3542
+    world_origin_alt: 1859.7
+
+/tercom/eskf_node:
+  ros__parameters:
+    imu_rate_hz: 50.0
+
+    # Process noise
+    accel_noise: 0.1
+    gyro_noise: 0.01
+    accel_bias_noise: 0.001
+    gyro_bias_noise: 0.0001
+    bias_time_constant: 300.0
+
+    # Measurement noise — tercom_noise_base = one pixel size for taif_test4
+    tercom_noise_base: 5.93
+    baro_noise: 3.0
+    baro_update_rate_hz: 1.0
+    velocity_noise: 0.5
+    enable_velocity_updates: true
+    velocity_update_rate_hz: 5.0
+
+    # Initialization
+    init_pos_std: 5.0
+    init_vel_std: 1.0
+    init_att_std: 0.05
+    init_abias_std: 0.5
+    init_wbias_std: 0.01
+    gps_init_samples: 20
+    gps_init_timeout_s: 30.0
+
+    # World origin
+    world_origin_lat: 21.2651
+    world_origin_lon: 40.3542
+    world_origin_alt: 1859.7
+
+    # Health monitoring
+    nis_threshold: 15.0
+    nis_window_size: 10
+    max_position_std: 500.0
+    max_innovation_m: 200.0
+    consecutive_reject_limit: 5
+    divergence_action: "reset"
+
+/tercom/diagnostics_node:
+  ros__parameters:
+    log_to_csv: true
+    csv_path: "/tmp/tercom_logs/"
+    publish_dem_pointcloud: true
+    dem_pointcloud_decimation: 4
+    dem_file: "/home/user/shared_volume/PX4-Autopilot/Tools/simulation/gz/models/taif_test4/textures/taif_test4_tercom_dem.tif"
+    error_publish_rate_hz: 10.0
+    path_publish_rate_hz: 2.0
+    world_origin_lat: 21.2651
+    world_origin_lon: 40.3542
+    world_origin_alt: 1859.7

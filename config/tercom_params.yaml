@@ -1,0 +1,114 @@
+# ==========================================================================
+# TERCOM Navigation Parameters
+# All parameters are declared as ROS 2 parameters and can be set at launch
+# or runtime (where safe). Parameters with -1.0 default = auto-computed
+# from DEM properties.
+# ==========================================================================
+
+/tercom/dem_server_node:
+  ros__parameters:
+    dem_file: ""                          # REQUIRED: absolute path to .tif DEM file
+    dem_metadata_file: ""                 # Optional: path to .json sidecar (empty = skip)
+    nodata_value: -9999.0                 # Sentinel value for missing elevation data
+    interpolation_method: "bilinear"      # "nearest" or "bilinear"
+
+/tercom/tercom_node:
+  ros__parameters:
+    # DEM (loaded locally for performance - same path as dem_server)
+    dem_file: ""                          # REQUIRED: absolute path to .tif DEM file
+
+    # Profile collection
+    profile_min_spacing_m: -1.0           # Min distance between samples (m); -1 = auto (1.0 * pixel_size)
+    profile_max_samples: 20               # Number of terrain samples per profile
+    profile_min_distance_m: -1.0          # Min total profile length (m); -1 = auto (15 * pixel_size)
+
+    # Search window parameters
+    search_radius_pixels: 150             # Static search window half-size in pixels (used when dynamic is off or as fallback)
+    search_radius_dynamic: true           # Use ESKF covariance to adapt search radius
+    search_radius_sigma_mult: 3.0         # radius = mult * sigma_pos / pixel_size
+    search_radius_min_pixels: 50          # Minimum search radius (pixels) - 50px * 5.93m = ~300m floor
+    search_radius_max_pixels: 300         # Maximum search radius (pixels)
+
+    # Quality thresholds (matches below these are rejected)
+    mad_reject_threshold: 30.0            # Reject if MAD > this (meters)
+    discrimination_min: 1.02              # Reject if 2nd_best/best < this.
+                                          # NOTE: straight-line profiles constrain along-track
+                                          # only — cross-track is ambiguous so disc is naturally
+                                          # ~1.0 even for excellent matches. roughness_min is the
+                                          # primary guard against flat-terrain false positives.
+    discrimination_exclusion_radius: 3    # Pixels around best to exclude for 2nd-best
+    roughness_min: 5.0                    # Reject if terrain std in search window < this (meters)
+
+    # Adaptive sampling (Section 5 of implementation plan)
+    enable_adaptive_sampling: true        # Enable velocity-based adaptive sampling
+    adaptive_min_interval_s: 0.5          # Minimum time between samples (seconds)
+    adaptive_max_interval_s: 5.0          # Maximum time between samples (seconds)
+    adaptive_pixels_per_sample: 1.5       # Target spacing in DEM pixels
+
+    # Rangefinder mounting configuration
+    # true  = gimbal keeps beam pointing straight down — range = vertical AGL (no trig)
+    # false = body-fixed sensor tilts with UAV — applies cos(roll)*cos(pitch) correction
+    rangefinder_is_gimbaled: true
+
+    # Sensor timestamp synchronization
+    sync_slop_s: 0.05                     # Baro + range timestamp tolerance (seconds)
+
+    # World origin for ENU conversion (Gazebo spherical coords)
+    world_origin_lat: 0.0                 # Gazebo world origin latitude (degrees)
+    world_origin_lon: 0.0                 # Gazebo world origin longitude (degrees)
+    world_origin_alt: 0.0                 # Gazebo world origin altitude MSL (meters)
+
+/tercom/eskf_node:
+  ros__parameters:
+    # IMU processing rate
+    imu_rate_hz: 50.0                     # Target IMU processing rate (Hz); raw is ~250 Hz
+
+    # Process noise (tune based on IMU datasheet)
+    accel_noise: 0.1                      # Accelerometer noise density (m/s^2)
+    gyro_noise: 0.01                      # Gyroscope noise density (rad/s)
+    accel_bias_noise: 0.001               # Accel bias random walk (m/s^3)
+    gyro_bias_noise: 0.0001               # Gyro bias random walk (rad/s^2)
+    bias_time_constant: 300.0             # Gauss-Markov bias time constant (seconds)
+
+    # Measurement noise
+    tercom_noise_base: -1.0               # Base TERCOM noise (m); -1 = auto (pixel_size)
+    baro_noise: 3.0                       # Barometric altitude noise std (meters)
+    baro_update_rate_hz: 1.0              # How often to apply barometric updates (Hz)
+    velocity_noise: 0.5                   # Velocity measurement noise std (m/s)
+    enable_velocity_updates: true         # Use MAVROS velocity for aiding
+    velocity_update_rate_hz: 5.0          # How often to apply velocity updates (Hz)
+
+    # Initialization
+    init_pos_std: 5.0                     # Initial position uncertainty (meters)
+    init_vel_std: 1.0                     # Initial velocity uncertainty (m/s)
+    init_att_std: 0.05                    # Initial attitude uncertainty (radians)
+    init_abias_std: 0.5                   # Initial accel bias uncertainty (m/s^2)
+    init_wbias_std: 0.01                  # Initial gyro bias uncertainty (rad/s)
+    gps_init_samples: 20                  # Number of GPS fixes to average for init
+    gps_init_timeout_s: 30.0              # Max time to wait for GPS init (seconds)
+
+    # World origin (must match tercom_node)
+    world_origin_lat: 0.0
+    world_origin_lon: 0.0
+    world_origin_alt: 0.0
+
+    # Health monitoring (Section 6 of implementation plan)
+    nis_threshold: 15.0                   # NIS above this = suspicious (chi-sq 2DOF: 95% = 5.99)
+    nis_window_size: 10                   # Number of recent NIS values to average
+    max_position_std: 500.0               # Max position std before reset (meters)
+    max_innovation_m: 200.0               # Innovation gate for TERCOM updates (meters)
+    consecutive_reject_limit: 5           # Consecutive rejections before declaring divergence
+    divergence_action: "reset"            # "reset", "warn", or "reset_with_gps"
+
+/tercom/diagnostics_node:
+  ros__parameters:
+    log_to_csv: true                      # Enable CSV logging of estimates
+    csv_path: "/tmp/tercom_logs/"         # Output directory for CSV files
+    publish_dem_pointcloud: true          # Publish DEM as PointCloud2 for visualization
+    dem_pointcloud_decimation: 4          # Publish every Nth pixel (reduces density)
+    dem_file: ""                          # DEM file for point cloud generation
+    error_publish_rate_hz: 10.0           # Rate for error metric publication (Hz)
+    path_publish_rate_hz: 2.0             # Rate for path visualization (Hz)
+    world_origin_lat: 0.0
+    world_origin_lon: 0.0
+    world_origin_alt: 0.0
