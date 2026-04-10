@@ -30,6 +30,7 @@ import numpy as np
 
 import rclpy
 from rclpy.node import Node
+from tercom_nav.core.timing import ComponentTimer
 from rclpy.qos import QoSPresetProfiles
 
 from std_msgs.msg import String, Float32MultiArray
@@ -157,6 +158,13 @@ class ESKFNode(Node):
         self._pub_bias_w = self.create_publisher(Vector3Stamped, '~/bias_gyro', 10)
         self._pub_state = self.create_publisher(String, '~/state', 10)
         self._pub_health = self.create_publisher(Float32MultiArray, '~/health', 10)
+        # Profiling: [imu_exec_ms, imu_hz, tercom_exec_ms, tercom_hz, baro_exec_ms, baro_hz]
+        self._pub_timing = self.create_publisher(Float32MultiArray, '~/timing', 10)
+
+        # Component timers
+        self._t_imu = ComponentTimer()
+        self._t_tercom_fix = ComponentTimer()
+        self._t_altitude = ComponentTimer()
 
         # Subscriptions — MAVROS publishes with BEST_EFFORT; use SENSOR_DATA QoS to match.
         # Internal topics (tercom_fix, tercom_quality) are from our own nodes (RELIABLE).
@@ -275,6 +283,7 @@ class ESKFNode(Node):
         if self._imu_counter % self._imu_decimation != 0:
             return
 
+        _t0 = self._t_imu.start()
         accel = np.array([
             msg.linear_acceleration.x,
             msg.linear_acceleration.y,
@@ -291,6 +300,7 @@ class ESKFNode(Node):
 
         # Publish odometry and pose at IMU rate
         self._publish_odom(msg.header)
+        self._t_imu.stop(_t0)
 
     # ---- Sensor Updates ----
 
@@ -304,8 +314,10 @@ class ESKFNode(Node):
             return
         self._last_baro_update_s = ts_s
 
+        _t0 = self._t_altitude.start()
         R_baro = self.get_parameter('baro_noise').value ** 2
         self._eskf.update_altitude(msg.amsl, R_baro, ts_s)
+        self._t_altitude.stop(_t0)
 
     def _cb_velocity(self, msg: TwistStamped):
         """Velocity aiding update - rate-limited."""
@@ -336,6 +348,7 @@ class ESKFNode(Node):
         if self._state != self.STATE_RUNNING:
             return
 
+        _t0 = self._t_tercom_fix.start()
         ts_s = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
 
         # Convert UTM fix to local ENU
@@ -394,6 +407,8 @@ class ESKFNode(Node):
 
         if diverged:
             self._handle_divergence(reason)
+
+        self._t_tercom_fix.stop(_t0)
 
     # ---- Divergence Recovery ----
 
@@ -520,6 +535,18 @@ class ESKFNode(Node):
             float(is_healthy),
         ]
         self._pub_health.publish(health_msg)
+
+        # Publish component timing metrics
+        timing_msg = Float32MultiArray()
+        timing_msg.data = [
+            float(self._t_imu.avg_exec_ms()),
+            float(self._t_imu.avg_hz()),
+            float(self._t_tercom_fix.avg_exec_ms()),
+            float(self._t_tercom_fix.avg_hz()),
+            float(self._t_altitude.avg_exec_ms()),
+            float(self._t_altitude.avg_hz()),
+        ]
+        self._pub_timing.publish(timing_msg)
 
     def _check_gps_timeout(self):
         """Check if GPS initialization has timed out."""

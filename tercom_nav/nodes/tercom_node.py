@@ -22,6 +22,7 @@ import numpy as np
 
 import rclpy
 from rclpy.node import Node
+from tercom_nav.core.timing import ComponentTimer
 from rclpy.time import Time
 from rclpy.qos import QoSPresetProfiles
 
@@ -52,15 +53,16 @@ class TERCOMNode(Node):
         self.declare_parameter('profile_min_spacing_m', -1.0)
         self.declare_parameter('profile_max_samples', 20)
         self.declare_parameter('profile_min_distance_m', -1.0)
-        self.declare_parameter('search_radius_pixels', 50)
+        self.declare_parameter('search_radius_pixels', 150)
         self.declare_parameter('search_radius_dynamic', True)
         self.declare_parameter('search_radius_sigma_mult', 3.0)
-        self.declare_parameter('search_radius_min_pixels', 10)
-        self.declare_parameter('search_radius_max_pixels', 100)
+        self.declare_parameter('search_radius_min_pixels', 50)
+        self.declare_parameter('search_radius_max_pixels', 300)
+        self.declare_parameter('dem_elevation_offset', 0.0)
         self.declare_parameter('mad_reject_threshold', 30.0)
-        self.declare_parameter('discrimination_min', 1.5)
+        self.declare_parameter('discrimination_min', 1.02)
         self.declare_parameter('discrimination_exclusion_radius', 3)
-        self.declare_parameter('roughness_min', 3.0)
+        self.declare_parameter('roughness_min', 5.0)
         self.declare_parameter('enable_adaptive_sampling', True)
         self.declare_parameter('adaptive_min_interval_s', 0.5)
         self.declare_parameter('adaptive_max_interval_s', 5.0)
@@ -151,6 +153,12 @@ class TERCOMNode(Node):
             PointStamped, '~/rejected_fix', 10)
         self._pub_rejection_reason = self.create_publisher(
             String, '~/rejection_reason', 10)
+        # Profiling: [cb_synced_exec_ms, cb_synced_hz, run_matching_exec_ms, run_matching_hz]
+        self._pub_timing = self.create_publisher(Float32MultiArray, '~/timing', 10)
+
+        # Component timers
+        self._t_synced = ComponentTimer()
+        self._t_matching = ComponentTimer()
 
         # Message filter synchronizer for altitude + rangefinder
         # MAVROS publishes with BEST_EFFORT reliability — match it.
@@ -206,6 +214,7 @@ class TERCOMNode(Node):
         raw_range = range_msg.ranges[0]
         if raw_range < range_msg.range_min or raw_range > range_msg.range_max:
             return
+        _t0_synced = self._t_synced.start()
 
         self._status = 'COLLECTING'
 
@@ -227,8 +236,13 @@ class TERCOMNode(Node):
             h_agl = raw_range * math.cos(roll) * math.cos(pitch)
 
         # Compute terrain elevation from synchronized measurements
-        # h_terrain = h_baro_MSL - h_AGL
-        h_terrain = alt_msg.amsl - h_agl
+        # h_terrain = h_baro_MSL - h_AGL, then subtract any datum offset between
+        # the barometric altitude datum and the DEM elevation datum.
+        # In Gazebo simulation: DEM_min != world_origin_alt, creating a constant
+        # offset = world_origin_alt - DEM_min (~134m for taif_test4).
+        # Set dem_elevation_offset = world_origin_alt - DEM_min in the params YAML.
+        # For real-world deployments with a correctly-referenced DEM, leave at 0.0.
+        h_terrain = alt_msg.amsl - h_agl - self.get_parameter('dem_elevation_offset').value
 
         if not self._diag_logged:
             self._diag_logged = True
@@ -256,6 +270,7 @@ class TERCOMNode(Node):
             should = True
 
         if not should:
+            self._t_synced.stop(_t0_synced)
             return
 
         # Record sample in adaptive sampler
@@ -269,20 +284,26 @@ class TERCOMNode(Node):
             if self._collector.total_distance_m >= self._profile_min_distance:
                 self._run_matching(alt_msg.header)
 
+        self._t_synced.stop(_t0_synced)
+
     def _run_matching(self, trigger_header=None):
         """Perform TERCOM correlation matching with the current profile."""
+        _t0_match = self._t_matching.start()
         self._status = 'MATCHING'
 
         terrain_h, dx_m, dy_m, timestamps = self._collector.get_profile_arrays()
         if len(terrain_h) < 5:
             self.get_logger().warning('Not enough profile samples for matching (< 5)')
+            self._t_matching.stop(_t0_match)
             return
 
-        # Predicted UTM position (first sample position)
+        # Predicted UTM position of the FIRST profile sample.
+        # pos is approximately the last sample position; subtracting the
+        # cumulative displacement (dx_m[-1], dy_m[-1]) gives the first sample.
         if self._latest_odom is not None:
             pos = self._latest_odom.pose.pose.position
             pred_e, pred_n, _ = local_enu_to_utm(
-                pos.x - dx_m[0], pos.y - dy_m[0], 0.0,
+                pos.x - dx_m[-1], pos.y - dy_m[-1], 0.0,
                 self._origin['easting'], self._origin['northing'], 0.0,
             )
         else:
@@ -322,6 +343,7 @@ class TERCOMNode(Node):
         except Exception as e:
             self.get_logger().error(f'match_profile failed: {e}')
             self._collector.slide_window()
+            self._t_matching.stop(_t0_match)
             return
 
         # Apply quality thresholds
@@ -413,6 +435,7 @@ class TERCOMNode(Node):
         # Slide window for continuity
         self._collector.slide_window()
         self._status = 'COLLECTING'
+        self._t_matching.stop(_t0_match)
 
     def _compute_search_radius(self) -> int:
         """Compute search radius in pixels, optionally from ESKF covariance."""
@@ -508,6 +531,16 @@ class TERCOMNode(Node):
         else:
             msg.data = self._status
         self._pub_status.publish(msg)
+
+        # Publish component timing metrics
+        timing_msg = Float32MultiArray()
+        timing_msg.data = [
+            float(self._t_synced.avg_exec_ms()),
+            float(self._t_synced.avg_hz()),
+            float(self._t_matching.avg_exec_ms()),
+            float(self._t_matching.avg_hz()),
+        ]
+        self._pub_timing.publish(timing_msg)
         total = self._match_count + self._reject_count
         if self._status == 'COLLECTING':
             min_dist = self._profile_min_distance

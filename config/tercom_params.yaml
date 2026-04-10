@@ -29,6 +29,13 @@
     search_radius_min_pixels: 50          # Minimum search radius (pixels) - 50px * 5.93m = ~300m floor
     search_radius_max_pixels: 300         # Maximum search radius (pixels)
 
+    # DEM elevation datum correction (meters).
+    # Subtract this from baro-derived h_terrain before matching.
+    # In Gazebo simulation the terrain is shifted by (world_origin_alt - DEM_min_elev);
+    # set this to that value. For real-world deployments with a correctly-referenced
+    # DEM, leave at 0.0.
+    dem_elevation_offset: 0.0
+
     # Quality thresholds (matches below these are rejected)
     mad_reject_threshold: 30.0            # Reject if MAD > this (meters)
     discrimination_min: 1.02              # Reject if 2nd_best/best < this.

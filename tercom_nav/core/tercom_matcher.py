@@ -84,7 +84,7 @@ class ProfileCollector:
         return arr[:, 0], arr[:, 1], arr[:, 2], arr[:, 3]
 
     def slide_window(self) -> None:
-        """Keep the oldest N/2 samples after a successful match.
+        """Keep the newest N/2 samples after a successful match.
 
         This provides profile continuity: the next collection starts
         with half the previous samples already in the buffer.
@@ -92,17 +92,34 @@ class ProfileCollector:
         keep = self.max_samples // 2
         if len(self._samples) > keep:
             self._samples = self._samples[-keep:]
-            # Update reference: new reference is the first kept sample's position
             if self._samples:
-                # Recompute displacements relative to new reference
+                # Recompute displacements relative to the first kept sample
                 first_dx = self._samples[0][1]
                 first_dy = self._samples[0][2]
                 recomputed = []
                 for h, dx, dy, ts in self._samples:
                     recomputed.append((h, dx - first_dx, dy - first_dy, ts))
                 self._samples = recomputed
-                self._reference_position = None  # Will be reset on next sample
-                self._last_position = None
+
+                # Restore _reference_position to the absolute ENU position of the
+                # first kept sample.  _last_position holds the absolute position of
+                # the last sample; the last kept sample's (recomputed) dx/dy is the
+                # displacement from first-kept to last-kept, so:
+                #   first_kept_pos = last_pos - last_kept_displacement
+                # Without this, new samples would compute dx=0 relative to their
+                # own position instead of relative to first_kept, corrupting the
+                # profile geometry for every subsequent match.
+                if self._last_position is not None:
+                    last_dx_new = self._samples[-1][1]
+                    last_dy_new = self._samples[-1][2]
+                    self._reference_position = np.array([
+                        self._last_position[0] - last_dx_new,
+                        self._last_position[1] - last_dy_new,
+                    ])
+                else:
+                    self._reference_position = None  # safety fallback
+                # _last_position remains valid: it is still the absolute position
+                # of the last kept sample, used for spacing enforcement.
 
     def reset(self) -> None:
         """Clear all samples and reset state."""
@@ -141,7 +158,8 @@ def match_profile(dem_array: np.ndarray, transform,
         transform: rasterio.Affine pixel-to-UTM transform
         pixel_size_x: DEM pixel width in meters (|transform.a|)
         pixel_size_y: DEM pixel height in meters (|transform.e|)
-        terrain_h: Measured terrain elevations, shape (N,)
+        terrain_h: Measured terrain elevations, shape (N,), already datum-corrected
+            (i.e., subtract dem_elevation_offset before passing here)
         dx_m: East displacements from first sample, shape (N,) in meters
         dy_m: North displacements from first sample, shape (N,) in meters
         predicted_utm: (easting, northing) predicted position of first sample
@@ -204,7 +222,6 @@ def match_profile(dem_array: np.ndarray, transform,
     cand_cols_2d, cand_rows_2d = np.meshgrid(cols, rows)
     candidate_rows = cand_rows_2d.ravel()   # (M,)
     candidate_cols = cand_cols_2d.ravel()   # (M,)
-    M = len(candidate_rows)
 
     # For each candidate, compute all N sample pixel positions
     # sample_rows[i, j] = candidate_rows[i] + dy_px[j]   shape (M, N)
@@ -251,11 +268,13 @@ def match_profile(dem_array: np.ndarray, transform,
     best_r_local = best_idx // n_cols   # local row index within candidate grid
     best_c_local = best_idx % n_cols    # local col index
 
-    r_offsets = np.abs(np.arange(n_rows) - best_r_local)
-    c_offsets = np.abs(np.arange(n_cols) - best_c_local)
-    r_grid, c_grid = np.meshgrid(c_offsets, r_offsets)   # (n_rows, n_cols)
-    neighbor_mask = (r_grid.ravel() <= discrimination_exclusion_radius) & \
-                    (c_grid.ravel() <= discrimination_exclusion_radius)
+    row_offsets = np.abs(np.arange(n_rows) - best_r_local)   # shape (n_rows,)
+    col_offsets = np.abs(np.arange(n_cols) - best_c_local)   # shape (n_cols,)
+    # meshgrid(col_offsets, row_offsets): first output varies along columns (col offset),
+    # second output varies along rows (row offset) — both shape (n_rows, n_cols).
+    col_grid, row_grid = np.meshgrid(col_offsets, row_offsets)
+    neighbor_mask = (col_grid.ravel() <= discrimination_exclusion_radius) & \
+                    (row_grid.ravel() <= discrimination_exclusion_radius)
 
     mad_for_disc = mad.copy()
     mad_for_disc[neighbor_mask] = np.inf

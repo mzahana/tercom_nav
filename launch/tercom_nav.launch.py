@@ -135,6 +135,8 @@ def launch_setup(context, *args, **kwargs):
             ('eskf_health',         '/tercom/eskf_node/health'),
             ('rejected_fix',        '/tercom/tercom_node/rejected_fix'),
             ('rejection_reason',    '/tercom/tercom_node/rejection_reason'),
+            ('tercom_timing',       '/tercom/tercom_node/timing'),
+            ('eskf_timing',         '/tercom/eskf_node/timing'),
         ],
     )
 

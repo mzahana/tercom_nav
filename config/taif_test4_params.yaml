@@ -40,6 +40,12 @@
     search_radius_min_pixels: 80
     search_radius_max_pixels: 300
 
+    # DEM elevation datum correction for taif_test4 Gazebo simulation.
+    # The Gazebo height map maps DEM_min (1725.4m) → Gazebo z=0 → world_origin_alt (1859.7m).
+    # So baro-derived terrain heights are 134.3m above DEM values everywhere.
+    # Formula: world_origin_alt - DEM_min_elev = 1859.7 - 1725.4 = 134.3 m
+    dem_elevation_offset: 134.3
+
     # Quality thresholds
     mad_reject_threshold: 30.0
     discrimination_min: 1.02              # straight-line flight: cross-track is ambiguous,

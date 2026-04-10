@@ -68,11 +68,13 @@ message_filters
 | `scipy` | Quaternion operations in ESKF |
 | `rasterio` | GeoTIFF DEM loading and CRS auto-detection |
 | `pyproj` | Coordinate reference system transformations (UTM ↔ WGS84) |
+| `pandas` | CSV parsing for `analyze_tercom_log.py` |
+| `matplotlib` | Figure generation for `analyze_tercom_log.py` |
 
 Install Python dependencies:
 
 ```bash
-pip install numpy scipy rasterio pyproj
+pip install numpy scipy rasterio pyproj pandas matplotlib
 ```
 
 ### Hardware / Simulation
@@ -273,6 +275,8 @@ All parameters are set via the params YAML. The defaults are in `config/tercom_p
 | `/tercom/tercom_node/profile_path` | `nav_msgs/Path` | Profile sample positions for RViz |
 | `/tercom/tercom_node/search_region` | `visualization_msgs/Marker` | Search window wireframe |
 | `/tercom/tercom_node/status` | `std_msgs/String` | `COLLECTING`, `MATCHING`, or `WAITING_SENSORS` at 1 Hz |
+| `/tercom/tercom_node/rejected_fix` | `geometry_msgs/PointStamped` | UTM position of a rejected TERCOM fix |
+| `/tercom/tercom_node/rejection_reason` | `std_msgs/String` | Human-readable reason the fix was rejected |
 
 **Services:**
 
@@ -342,6 +346,11 @@ All parameters are set via the params YAML. The defaults are in `config/tercom_p
 | `/tercom/diagnostics_node/tercom_fixes_viz` | `visualization_msgs/MarkerArray` | Sphere markers colored by match quality |
 | `/tercom/diagnostics_node/covariance_ellipse` | `visualization_msgs/Marker` | 2-sigma covariance ellipse |
 | `/tercom/diagnostics_node/dem_surface` | `sensor_msgs/PointCloud2` | DEM point cloud with jet colormap (latched, published once) |
+| `/tercom/diagnostics_node/error_arrow` | `visualization_msgs/MarkerArray` | Arrow marker showing current position error vector |
+| `/tercom/diagnostics_node/error_colored_path` | `visualization_msgs/MarkerArray` | Estimated path line colored by instantaneous error magnitude |
+| `/tercom/diagnostics_node/rejected_fixes_viz` | `visualization_msgs/MarkerArray` | Markers for rejected TERCOM fixes |
+| `/tercom/diagnostics_node/nis_history` | `std_msgs/Float32MultiArray` | Sliding-window NIS history array |
+| `/tercom/diagnostics_node/error_history_chart` | `std_msgs/Float32MultiArray` | Horizontal error history array |
 
 ---
 
@@ -407,6 +416,38 @@ After a successful match, a sliding window retains the last `max_samples / 2` sa
 When `log_to_csv: true`, `diagnostics_node` creates a timestamped CSV at `csv_path/tercom_log_YYYYMMDD_HHMMSS.csv`.
 
 **Columns:** `ros_timestamp_ns`, `est_x`, `est_y`, `est_z`, `est_vx`, `est_vy`, `est_vz`, `true_x`, `true_y`, `true_z`, `true_vx`, `true_vy`, `true_vz`, `err_x`, `err_y`, `err_z`, `err_h_norm`, `err_3d_norm`, `cov_xx`, `cov_yy`, `cov_zz`, `tercom_mad`, `tercom_disc`, `tercom_roughness`, `filter_state`, `nis`
+
+---
+
+## Log Analyzer
+
+`scripts/analyze_tercom_log.py` reads a CSV produced by `diagnostics_node` and generates publication-quality figures for post-flight performance analysis. It requires `pandas` and `matplotlib`.
+
+```bash
+python3 $(ros2 pkg prefix tercom_nav)/share/tercom_nav/scripts/analyze_tercom_log.py \
+    /tmp/tercom_logs/tercom_log_YYYYMMDD_HHMMSS.csv \
+    [--outdir /tmp/tercom_figures]
+```
+
+**Figures generated** (saved as PNG and PDF):
+
+| Figure | Description |
+|---|---|
+| `01_trajectory_xy` | XY ground track: estimated vs ground truth |
+| `02_position_error_time` | Per-axis and horizontal/3D error vs time |
+| `03_error_statistics` | Sliding-window RMSE, mean, max horizontal error |
+| `04_covariance_consistency` | 3-sigma position bounds vs actual error |
+| `05_nis_time` | NIS vs time with chi-squared consistency bounds |
+| `06_tercom_quality` | MAD, discrimination, roughness, adaptive noise vs time |
+| `07_speed_profile` | Estimated and true speed vs time |
+| `08_filter_state_timeline` | Color-coded filter state over time |
+| `09_error_histogram` | Distribution of horizontal and vertical errors |
+| `10_cov_vs_error` | Covariance sigma vs actual error (consistency scatter) |
+| `11_tercom_mad_vs_error` | TERCOM MAD vs position error scatter |
+| `12_trajectory_3d` | 3D trajectory comparison |
+| `13_accepted_fixes_rate` | Cumulative accepted TERCOM fixes vs time |
+| `14_health_metrics` | Filter health: max_pos_std, innov_norm, is_healthy |
+| `15_summary_dashboard` | Single-page multi-panel summary figure |
 
 ---
 
@@ -487,6 +528,8 @@ tercom_nav/
 ├── launch/
 │   ├── tercom_nav.launch.py         # Full system: all 4 nodes
 │   └── tercom_standalone.launch.py  # Minimal: tercom_node + eskf_node only
+├── scripts/
+│   └── analyze_tercom_log.py    # Post-flight log analysis and figure generation
 ├── tercom_nav/
 │   ├── nodes/
 │   │   ├── dem_server_node.py

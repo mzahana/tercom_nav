@@ -23,6 +23,7 @@ from datetime import datetime
 import numpy as np
 import rclpy
 from rclpy.node import Node
+from tercom_nav.core.timing import ComponentTimer
 from rclpy.qos import QoSProfile, DurabilityPolicy, ReliabilityPolicy, QoSPresetProfiles
 
 from std_msgs.msg import String, Float32MultiArray, Float64
@@ -102,6 +103,7 @@ class DiagnosticsNode(Node):
         # CSV setup
         self._csv_file = None
         self._csv_writer = None
+        self._csv_t0_ns = None
         if self.get_parameter('log_to_csv').value:
             self._setup_csv()
 
@@ -125,6 +127,17 @@ class DiagnosticsNode(Node):
         self._pub_rejected_viz     = self.create_publisher(MarkerArray,        '~/rejected_fixes_viz', 10)
         self._pub_nis_history      = self.create_publisher(Float32MultiArray,  '~/nis_history', 10)
         self._pub_err_history_chart= self.create_publisher(Float32MultiArray,  '~/error_history_chart', 10)
+        # Profiling: 16 floats — [exec_ms, hz] × 8 components across all 3 nodes
+        self._pub_profiling = self.create_publisher(Float32MultiArray, '~/profiling', 10)
+
+        # Cached timing arrays received from other nodes
+        self._tercom_timing = [0.0] * 4  # [synced_ms, synced_hz, match_ms, match_hz]
+        self._eskf_timing   = [0.0] * 6  # [imu_ms, imu_hz, tc_ms, tc_hz, baro_ms, baro_hz]
+
+        # Own component timers
+        self._t_timer_error = ComponentTimer()
+        self._t_timer_paths = ComponentTimer()
+        self._t_timer_stats = ComponentTimer()
 
         # Subscriptions — MAVROS publishes with BEST_EFFORT; use SENSOR_DATA QoS to match.
         # Internal topics (eskf_odom, tercom_fix/quality, eskf_state/health) are RELIABLE.
@@ -138,6 +151,8 @@ class DiagnosticsNode(Node):
         self.create_subscription(Float32MultiArray, 'eskf_health', self._cb_eskf_health, 10)
         self.create_subscription(PointStamped, 'rejected_fix',      self._cb_rejected_fix, 10)
         self.create_subscription(StringMsg,    'rejection_reason',  self._cb_rejection_reason, 10)
+        self.create_subscription(Float32MultiArray, 'tercom_timing', self._cb_tercom_timing, 10)
+        self.create_subscription(Float32MultiArray, 'eskf_timing',   self._cb_eskf_timing, 10)
 
         # Timers
         err_rate = self.get_parameter('error_publish_rate_hz').value
@@ -356,6 +371,16 @@ class DiagnosticsNode(Node):
 
         self._pub_rejected_viz.publish(self._rejected_markers)
 
+    def _cb_tercom_timing(self, msg: Float32MultiArray):
+        """Cache timing data published by tercom_node."""
+        if len(msg.data) >= 4:
+            self._tercom_timing = list(msg.data[:4])
+
+    def _cb_eskf_timing(self, msg: Float32MultiArray):
+        """Cache timing data published by eskf_node."""
+        if len(msg.data) >= 6:
+            self._eskf_timing = list(msg.data[:6])
+
     @staticmethod
     def _error_to_color(h_err: float):
         """Return (r, g, b) float tuple for a horizontal error value in metres."""
@@ -394,7 +419,9 @@ class DiagnosticsNode(Node):
 
     def _timer_error(self):
         """Publish current position error against ground truth."""
+        _t0 = self._t_timer_error.start()
         if self._est_odom is None or self._gt_odom is None or self._frame_offset is None:
+            self._t_timer_error.stop(_t0)
             return
 
         est = self._est_odom.pose.pose.position
@@ -470,8 +497,11 @@ class DiagnosticsNode(Node):
         if any(c != 0 for c in cov):
             self._publish_covariance_ellipse(cov, self._est_odom.header)
 
+        self._t_timer_error.stop(_t0)
+
     def _timer_paths(self):
         """Publish accumulated path visualizations."""
+        _t0 = self._t_timer_paths.start()
         if self._est_path.poses:
             self._pub_est_path.publish(self._est_path)
         if self._gt_path.poses:
@@ -541,9 +571,13 @@ class DiagnosticsNode(Node):
             chart_msg.data = flat
             self._pub_err_history_chart.publish(chart_msg)
 
+        self._t_timer_paths.stop(_t0)
+
     def _timer_stats(self):
         """Publish 1 Hz running error statistics."""
+        _t0 = self._t_timer_stats.start()
         if not self._h_errors:
+            self._t_timer_stats.stop(_t0)
             return
 
         errors = np.array(self._h_errors)
@@ -571,6 +605,33 @@ class DiagnosticsNode(Node):
         self.get_logger().info(
             f'State:{self._filter_state} | H_err: rms={rms_h:.1f}m max={max_h:.1f}m'
         )
+
+        self._t_timer_stats.stop(_t0)
+
+        # Publish aggregated profiling for all three nodes.
+        # Layout (16 floats): [exec_ms, hz] × 8 components:
+        #   [0-1]  tercom: cb_synced
+        #   [2-3]  tercom: run_matching
+        #   [4-5]  eskf: cb_imu
+        #   [6-7]  eskf: cb_tercom_fix
+        #   [8-9]  eskf: cb_altitude
+        #   [10-11] diag: timer_error
+        #   [12-13] diag: timer_paths
+        #   [14-15] diag: timer_stats
+        prof_msg = Float32MultiArray()
+        prof_msg.data = (
+            self._tercom_timing[:4]
+            + self._eskf_timing[:6]
+            + [
+                float(self._t_timer_error.avg_exec_ms()),
+                float(self._t_timer_error.avg_hz()),
+                float(self._t_timer_paths.avg_exec_ms()),
+                float(self._t_timer_paths.avg_hz()),
+                float(self._t_timer_stats.avg_exec_ms()),
+                float(self._t_timer_stats.avg_hz()),
+            ]
+        )
+        self._pub_profiling.publish(prof_msg)
 
     def _publish_covariance_ellipse(self, cov, header):
         """Publish 2D covariance ellipse as a flat cylinder marker."""
@@ -712,15 +773,32 @@ class DiagnosticsNode(Node):
         self._csv_file = open(csv_file_path, 'w', newline='')
         self._csv_writer = csv.writer(self._csv_file)
         self._csv_writer.writerow([
-            'ros_timestamp_ns', 'est_x', 'est_y', 'est_z',
-            'est_vx', 'est_vy', 'est_vz',
+            # Timing
+            'ros_timestamp_ns', 'time_s',
+            # Estimated state
+            'est_x', 'est_y', 'est_z',
+            'est_vx', 'est_vy', 'est_vz', 'est_speed',
+            # Ground truth position
             'true_x', 'true_y', 'true_z',
-            'true_vx', 'true_vy', 'true_vz',
-            'err_x', 'err_y', 'err_z', 'err_h_norm', 'err_3d_norm',
-            'cov_xx', 'cov_yy', 'cov_zz',
-            'tercom_mad', 'tercom_disc', 'tercom_roughness',
-            'filter_state', 'nis',
+            'true_vx', 'true_vy', 'true_vz', 'true_speed',
+            # GPS ground truth (when available)
+            'gt_lat', 'gt_lon', 'gt_alt',
+            # Position errors
+            'err_x', 'err_y', 'err_z', 'err_h_norm', 'err_v_abs', 'err_3d_norm',
+            # ESKF covariance (position diagonal + xy cross-term + velocity diagonal)
+            'cov_xx', 'cov_yy', 'cov_zz', 'cov_xy',
+            'cov_vx', 'cov_vy', 'cov_vz',
+            # TERCOM match quality
+            'tercom_mad', 'tercom_disc', 'tercom_roughness', 'tercom_noise',
+            # Accepted fix count
+            'tercom_accepted_count',
+            # Last rejection reason (empty string if last event was an accept)
+            'last_rejection_reason',
+            # Filter state and health
+            'filter_state',
+            'nis', 'health_max_pos_std', 'health_innov_norm', 'health_is_healthy',
         ])
+        self._csv_t0_ns = None  # will be set on first row
         self.get_logger().info(f'Logging to CSV: {csv_file_path}')
 
     def _write_csv_row(self, est_msg: Odometry):
@@ -739,26 +817,62 @@ class DiagnosticsNode(Node):
             dy = ep.y - (gp.y + self._frame_offset[1])
             dz = ep.z - (gp.z + self._frame_offset[2])
 
+            # TERCOM quality metrics
             q = self._last_tercom_quality
-            mad = q[0] if len(q) > 0 else 0.0
-            disc = q[1] if len(q) > 1 else 0.0
+            mad   = q[0] if len(q) > 0 else 0.0
+            disc  = q[1] if len(q) > 1 else 0.0
             rough = q[2] if len(q) > 2 else 0.0
-            nis = self._health[0] if self._health else 0.0
+            noise = q[3] if len(q) > 3 else 0.0
 
+            # Filter health metrics
+            nis            = self._health[0] if len(self._health) > 0 else 0.0
+            max_pos_std    = self._health[1] if len(self._health) > 1 else 0.0
+            innov_norm     = self._health[2] if len(self._health) > 2 else 0.0
+            is_healthy     = self._health[3] if len(self._health) > 3 else 1.0
+
+            # Timing
             ts_ns = est_msg.header.stamp.sec * 10**9 + est_msg.header.stamp.nanosec
+            if self._csv_t0_ns is None:
+                self._csv_t0_ns = ts_ns
+            time_s = (ts_ns - self._csv_t0_ns) * 1e-9
+
+            # Speed magnitudes
+            est_speed  = math.sqrt(ev.x**2 + ev.y**2 + ev.z**2)
+            true_speed = math.sqrt(gv.x**2 + gv.y**2 + gv.z**2)
+
+            # GPS ground truth (lat/lon/alt) when available
+            gt_lat = self._gt_global.latitude  if self._gt_global else float('nan')
+            gt_lon = self._gt_global.longitude if self._gt_global else float('nan')
+            gt_alt = self._gt_global.altitude  if self._gt_global else float('nan')
 
             self._csv_writer.writerow([
-                ts_ns,
+                # Timing
+                ts_ns, time_s,
+                # Estimated state
                 ep.x, ep.y, ep.z,
-                ev.x, ev.y, ev.z,
+                ev.x, ev.y, ev.z, est_speed,
+                # Ground truth state
                 gp.x, gp.y, gp.z,
-                gv.x, gv.y, gv.z,
+                gv.x, gv.y, gv.z, true_speed,
+                # GPS ground truth
+                gt_lat, gt_lon, gt_alt,
+                # Errors
                 dx, dy, dz,
-                math.hypot(dx, dy),
-                math.sqrt(dx**2 + dy**2 + dz**2),
-                cov[0], cov[7], cov[14],  # cov_xx, cov_yy, cov_zz
-                mad, disc, rough,
-                self._filter_state, nis,
+                math.hypot(dx, dy),          # err_h_norm
+                abs(dz),                     # err_v_abs
+                math.sqrt(dx**2 + dy**2 + dz**2),  # err_3d_norm
+                # Covariance (position diagonal + xy cross-term + velocity diagonal)
+                cov[0], cov[7], cov[14],     # cov_xx, cov_yy, cov_zz
+                cov[1],                      # cov_xy (x–y cross-covariance)
+                cov[21], cov[28], cov[35],   # cov_vx, cov_vy, cov_vz
+                # TERCOM quality
+                mad, disc, rough, noise,
+                # Fix accounting
+                self._accepted_count,
+                self._last_rejection_reason,
+                # Filter state and health
+                self._filter_state,
+                nis, max_pos_std, innov_norm, is_healthy,
             ])
         except Exception as e:
             self.get_logger().warning(f'CSV write error: {e}')
