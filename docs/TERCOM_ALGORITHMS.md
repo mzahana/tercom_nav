@@ -117,7 +117,11 @@ Once synchronised input triggers `_cb_synced`, TERCOM extracts ground height:
 2. Checks configuration mapping parameter `rangefinder_is_gimbaled`:
    - **If Gimbaled (True):** `h_agl = raw_range` since the beam explicitly points physically downwards.
    - **If Body-Fixed (False):** The vehicle IMU quaternion ($q$) translates mathematically into roll ($\phi$) and pitch ($\theta$).
-     $$ h_{agl} = raw\_range \times \cos(\phi) \times \cos(\theta) $$
+
+     ```math
+     h_{agl} = raw\_range \times \cos(\phi) \times \cos(\theta)
+     ```
+
 3. Resolves global Terrain height ($h_{terrain}$) mapping:
    - $h_{terrain} = h_{baro_{msl}} - h_{agl} - h_{offset\_configuration}$ 
 
@@ -133,7 +137,11 @@ Once synchronised input triggers `_cb_synced`, TERCOM extracts ground height:
 4. **Data Aggregation**: Simultaneously rips every target altitude across $M \times N$ paths forming `dem_profiles` from the memory layout. 
 5. **Mask Deduplication**: If DEM limits span outside borders, or a pixel reads `-9999.0` it triggers `valid_mask = False`. Computes proportional valid path ratios.
 6. **Core MAD Evaluation**:
-   $$ \text{MAD}_k = \frac{1}{\text{valid\_count}} \sum \left| \text{dem\_profiles}_{k} - h_{terrain} \right| $$
+
+   ```math
+   \text{MAD}_k = \frac{1}{\text{valid\_count}} \sum \left| \text{dem\_profiles}_{k} - h_{terrain} \right|
+   ```
+
 7. **Best Match Selection**: Computes the argmin determining identifying the absolute lowest difference score.
 
 ### Step 5: Validating Correlation Health
@@ -178,7 +186,11 @@ Executes directly driven by synchronous physical `IMU` updates at native decimat
    - $\mathbf{a}_{corr} = \mathbf{a}_m - \mathbf{a}_{bias\_k}$
    - $\boldsymbol{\omega}_{corr} = \boldsymbol{\omega}_m - \boldsymbol{\omega}_{bias\_k}$
 3. Integrates spatial quaternion matrices ($R_{(q)}$) mathematically shifting gravity structures onto absolute maps:
-   $$ \mathbf{a}_{enu} = \mathbf{R} \cdot \mathbf{a}_{corr} + \mathbf{g}_{enu} $$
+
+   ```math
+   \mathbf{a}_{enu} = \mathbf{R} \cdot \mathbf{a}_{corr} + \mathbf{g}_{enu}
+   ```
+
 4. Re-evaluates kinematics directly incrementing basic kinematic tracking values:
    - $\mathbf{p}_{k+1} = \mathbf{p}_k + \mathbf{v}_k \Delta t + 0.5 \mathbf{a}_{enu} \Delta t^2$
    - $\mathbf{v}_{k+1} = \mathbf{v}_k + \mathbf{a}_{enu} \Delta t$
@@ -192,7 +204,10 @@ Simultaneously evaluates mathematical drift uncertainties through continuous tim
    - Extrapolates bias variables tracking Markov chains: `Fx[9:12, 9:12] = -(1/tau) * Eye(3)`
 2. Derives system noise covariance matrix $\mathbf{Q}$ mapping variances across temporal domains parameters constants (e.g. `accel_noise^2 * dt`).
 3. Executes traditional covariance integrations mathematically combining states:
-   $$ \mathbf{P}_{predict} = (\mathbf{I} + \mathbf{F}_x \Delta t) \mathbf{P} (\mathbf{I} + \mathbf{F}_x \Delta t)^T + \mathbf{Q} $$
+
+   ```math
+   \mathbf{P}_{predict} = (\mathbf{I} + \mathbf{F}_x \Delta t) \mathbf{P} (\mathbf{I} + \mathbf{F}_x \Delta t)^T + \mathbf{Q}
+   ```
 
 ### 4.4. Measurement Interrogation and Kalman Output (`update_xxx` routines)
 Executes asynchronously whenever disparate measuring tools signal metrics. Examples include $z_{xy}$ mapping TERCOM fixes against uncertainty $\mathbf{R}_{xy}$.
@@ -212,7 +227,11 @@ The primary differentiator for the Error-State Kalman formulation executes insid
    - Converts the variance angles ($\delta \theta$) back through small rotation approximation formulas merging nonlinearly across quaternion states.
    - Adjusts internal IMU sensor biases mapping corrections directly eliminating fundamental drift properties.
 3. Overwrites existing algorithmic Uncertainty Variance Matrix formulas utilizing physically rigorous "Joseph-Form" stabilizing numerical algorithms ensuring perfectly conditioned symmetric matrices structure:
-   $$ \mathbf{P}_{new} = (\mathbf{I} - \mathbf{K}\mathbf{H}) \mathbf{P} (\mathbf{I} - \mathbf{K}\mathbf{H})^T + \mathbf{K}\mathbf{R}\mathbf{K}^T $$
+
+   ```math
+   \mathbf{P}_{new} = (\mathbf{I} - \mathbf{K}\mathbf{H}) \mathbf{P} (\mathbf{I} - \mathbf{K}\mathbf{H})^T + \mathbf{K}\mathbf{R}\mathbf{K}^T
+   ```
+
 4. **Mandatory Purge Validation**: Destroys spatial variance matrices ($\delta \mathbf{x} = 0$) entirely completing Error State evaluation loop. The routine proceeds fully normalized.
 
 ### 4.6. Why ESKF is Superior to Standard EKF
