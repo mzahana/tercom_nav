@@ -181,20 +181,34 @@ stateDiagram-v2
 
 ### 4.2. Nominal Predict State Processing (`predict` function)
 Executes directly driven by synchronous physical `IMU` updates at native decimation rates:
-1. Retrieves high-speed dynamic kinematics from physical accelerometers ($\mathbf{a}_m$) and rate gyros ($\boldsymbol{\omega}_m$).
+
+1. Retrieves raw IMU measurements: accelerometer $\mathbf{a}_m$ and gyroscope $\boldsymbol{\omega}_m$.
+
 2. Eliminates state drift biases:
-   - $\mathbf{a}_{corr} = \mathbf{a}_m - \mathbf{a}_{b,k}$
-   - $\boldsymbol{\omega}_{corr} = \boldsymbol{\omega}_m - \boldsymbol{\omega}_{b,k}$
-3. Integrates spatial quaternion matrices ($R_{(q)}$) mathematically shifting gravity structures onto absolute maps:
+
+```math
+\mathbf{a}_{corr} = \mathbf{a}_m - \mathbf{a}_{b,k}, \qquad \boldsymbol{\omega}_{corr} = \boldsymbol{\omega}_m - \boldsymbol{\omega}_{b,k}
+```
+
+3. Rotates corrected acceleration into the ENU frame via rotation matrix $\mathbf{R}(\mathbf{q})$, then adds gravity:
 
 ```math
 \mathbf{a}_{enu} = \mathbf{R} \cdot \mathbf{a}_{corr} + \mathbf{g}_{enu}
 ```
 
-4. Re-evaluates kinematics directly incrementing basic kinematic tracking values:
-   - $\mathbf{p}_{k+1} = \mathbf{p}_k + \mathbf{v}_k \Delta t + 0.5 \mathbf{a}_{enu} \Delta t^2$
-   - $\mathbf{v}_{k+1} = \mathbf{v}_k + \mathbf{a}_{enu} \Delta t$
-   - $\mathbf{q}_{k+1} = \mathbf{q}_k \otimes \mathbf{q}_{\Delta t}(\boldsymbol{\omega}_{corr} \Delta t)$
+4. Integrates kinematics forward by one IMU timestep $\Delta t$:
+
+```math
+\mathbf{p}_{k+1} = \mathbf{p}_k + \mathbf{v}_k \Delta t + \tfrac{1}{2} \mathbf{a}_{enu} \Delta t^2
+```
+
+```math
+\mathbf{v}_{k+1} = \mathbf{v}_k + \mathbf{a}_{enu} \Delta t
+```
+
+```math
+\mathbf{q}_{k+1} = \mathbf{q}_k \otimes \mathbf{q}_{\Delta}(\boldsymbol{\omega}_{corr}\,\Delta t)
+```
 
 ### 4.3. Error Matrix Propagations
 Simultaneously evaluates mathematical drift uncertainties through continuous time integration matrices.
