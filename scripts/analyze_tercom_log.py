@@ -25,6 +25,7 @@ Output figures (saved as PNG + PDF by default):
   15_summary_dashboard      - Single-page multi-panel summary figure
 """
 import argparse
+import functools
 import os
 import sys
 import warnings
@@ -193,6 +194,110 @@ def fig_trajectory_xy(df: pd.DataFrame, outdir: str):
     ax.set_aspect('equal', adjustable='datalim')
     fig.tight_layout()
     save_fig(fig, outdir, '01_trajectory_xy')
+
+
+def fig_trajectory_satellite(df: pd.DataFrame, outdir: str,
+                              origin_lat: float = None, origin_lon: float = None,
+                              satellite_zoom: int = 17):
+    """2D trajectory plot over a satellite basemap.
+
+    Requires --origin-lat and --origin-lon (the geographic coordinates of the
+    ENU frame origin, i.e. world_origin_lat / world_origin_lon in the launch
+    params).  The function converts ENU (x=East, y=North) metre coordinates
+    into Web Mercator (EPSG:3857) so that contextily can overlay satellite tiles.
+
+    Tile source: Esri World Imagery (no API key required).
+    Falls back gracefully if contextily / pyproj are unavailable or origin
+    coordinates are not supplied.
+    """
+    if origin_lat is None or origin_lon is None:
+        warnings.warn(
+            'fig_trajectory_satellite: skipped — pass --origin-lat and '
+            '--origin-lon to enable the satellite-map trajectory plot.')
+        return
+
+    try:
+        import contextily as ctx
+        from pyproj import Transformer
+    except ImportError as exc:
+        warnings.warn(f'fig_trajectory_satellite: skipped — {exc}')
+        return
+
+    # ── Coordinate conversion: ENU (m) → Web Mercator (m) ──────────────────
+    # Auto-detect UTM zone from the origin's longitude.
+    utm_zone = int((origin_lon + 180.0) / 6.0) + 1
+    utm_epsg = 32600 + utm_zone  # North hemisphere (32700 + zone for South)
+    if origin_lat < 0:
+        utm_epsg = 32700 + utm_zone
+
+    # Geographic origin → UTM easting/northing
+    tf_geo_to_utm = Transformer.from_crs('EPSG:4326', f'EPSG:{utm_epsg}',
+                                          always_xy=True)
+    origin_e, origin_n = tf_geo_to_utm.transform(origin_lon, origin_lat)
+
+    # UTM → Web Mercator
+    tf_utm_to_web = Transformer.from_crs(f'EPSG:{utm_epsg}', 'EPSG:3857',
+                                          always_xy=True)
+
+    def enu_to_web(x_enu, y_enu):
+        utm_e = origin_e + x_enu
+        utm_n = origin_n + y_enu
+        return tf_utm_to_web.transform(utm_e, utm_n)
+
+    # Ground truth trajectory (frame-aligned)
+    tx = df['true_x_aligned'] if 'true_x_aligned' in df.columns else df['true_x']
+    ty = df['true_y_aligned'] if 'true_y_aligned' in df.columns else df['true_y']
+
+    gt_wx, gt_wy   = enu_to_web(tx.values, ty.values)
+    est_wx, est_wy = enu_to_web(df['est_x'].values, df['est_y'].values)
+
+    # ── Plot ─────────────────────────────────────────────────────────────────
+    fig, ax = plt.subplots(figsize=(9, 8), dpi=200)
+
+    ax.plot(gt_wx, gt_wy, color='#2196F3', lw=2.0,
+            label='Ground Truth (frame-aligned)', zorder=3)
+    ax.plot(est_wx, est_wy, color='#FF5722', lw=1.4, ls='--',
+            label='ESKF Estimate', zorder=4)
+
+    # Start / end markers
+    ax.scatter(gt_wx[0], gt_wy[0], marker='o', s=100,
+               color='lime', edgecolors='k', lw=0.8, zorder=6, label='Start')
+    ax.scatter(gt_wx[-1], gt_wy[-1], marker='s', s=100,
+               color='red', edgecolors='k', lw=0.8, zorder=6, label='End')
+
+    # TERCOM fix locations
+    if 'tercom_accepted_count' in df.columns:
+        fix_rows = df[df['tercom_accepted_count'].diff().fillna(0) > 0]
+        if not fix_rows.empty:
+            fx, fy = enu_to_web(fix_rows['est_x'].values,
+                                 fix_rows['est_y'].values)
+            ax.scatter(fx, fy, marker='+', s=70, color='yellow',
+                       linewidths=1.8, zorder=5, label='TERCOM Fix Applied')
+
+    # ── Satellite basemap ─────────────────────────────────────────────────────
+    try:
+        ctx.add_basemap(
+            ax,
+            crs='EPSG:3857',
+            source=ctx.providers.Esri.WorldImagery,
+            zoom=satellite_zoom,
+            attribution_size=7,
+        )
+    except Exception as tile_exc:
+        ax.text(0.5, 0.5,
+                f'Satellite tiles unavailable:\n{tile_exc}',
+                transform=ax.transAxes, ha='center', va='center',
+                color='red', fontsize=9,
+                bbox=dict(boxstyle='round', fc='lightyellow', alpha=0.9))
+
+    ax.set_xlabel('Web Mercator X (m)')
+    ax.set_ylabel('Web Mercator Y (m)')
+    ax.set_title('XY Ground Track over Satellite Map\n'
+                 f'Origin: {origin_lat:.6f}°N, {origin_lon:.6f}°E  '
+                 f'(UTM zone {utm_zone}{"N" if origin_lat >= 0 else "S"})')
+    ax.legend(loc='best', framealpha=0.85)
+    fig.tight_layout()
+    save_fig(fig, outdir, '01b_trajectory_satellite')
 
 
 def fig_position_error_time(df: pd.DataFrame, outdir: str):
@@ -850,7 +955,10 @@ def _verdict(condition: bool, good: str, bad: str) -> tuple:
 
 
 def generate_pdf_report(df: pd.DataFrame, stats: dict,
-                        csv_path: str, outdir: str) -> str:
+                        csv_path: str, outdir: str,
+                        origin_lat: float = None,
+                        origin_lon: float = None,
+                        satellite_zoom: int = 17) -> str:
     """Generate a multi-page PDF analysis report.
 
     Returns the path to the saved PDF.
@@ -877,7 +985,7 @@ def generate_pdf_report(df: pd.DataFrame, stats: dict,
                     ha='center', va='center', color='#90CAF9',
                     fontsize=15, transform=banner.transAxes)
 
-        body = fig.add_axes([0.08, 0.08, 0.84, 0.60])
+        body = fig.add_axes([0.08, 0.28, 0.84, 0.40])
         body.axis('off')
 
         meta = [
@@ -1108,6 +1216,72 @@ def generate_pdf_report(df: pd.DataFrame, stats: dict,
 
         pdf.savefig(fig, bbox_inches='tight')
         plt.close(fig)
+
+        # ── PAGE 3b: Satellite Map Trajectory ───────────────────────────────
+        if origin_lat is not None and origin_lon is not None:
+            try:
+                import contextily as ctx
+                from pyproj import Transformer
+
+                utm_zone = int((origin_lon + 180.0) / 6.0) + 1
+                utm_epsg = 32600 + utm_zone if origin_lat >= 0 else 32700 + utm_zone
+                tf_geo_to_utm = Transformer.from_crs('EPSG:4326', f'EPSG:{utm_epsg}',
+                                                      always_xy=True)
+                tf_utm_to_web = Transformer.from_crs(f'EPSG:{utm_epsg}', 'EPSG:3857',
+                                                      always_xy=True)
+                origin_e, origin_n = tf_geo_to_utm.transform(origin_lon, origin_lat)
+
+                def _enu_to_web(x_enu, y_enu):
+                    return tf_utm_to_web.transform(origin_e + x_enu, origin_n + y_enu)
+
+                _tx_s = df['true_x_aligned'] if 'true_x_aligned' in df.columns else df['true_x']
+                _ty_s = df['true_y_aligned'] if 'true_y_aligned' in df.columns else df['true_y']
+                gt_wx, gt_wy   = _enu_to_web(_tx_s.values, _ty_s.values)
+                est_wx, est_wy = _enu_to_web(df['est_x'].values, df['est_y'].values)
+
+                fig = plt.figure(figsize=(11, 8.5))
+                _page_style(fig)
+                _header_bar(fig, 'Satellite Map Trajectory',
+                            f'Origin: {origin_lat:.6f}°N, {origin_lon:.6f}°E  '
+                            f'(UTM zone {utm_zone}{"N" if origin_lat >= 0 else "S"})')
+
+                ax_sat = fig.add_axes([0.05, 0.05, 0.90, 0.83])
+                ax_sat.plot(gt_wx, gt_wy, color='#2196F3', lw=2.0,
+                            label='Ground Truth (frame-aligned)', zorder=3)
+                ax_sat.plot(est_wx, est_wy, color='#FF5722', lw=1.4, ls='--',
+                            label='ESKF Estimate', zorder=4)
+                ax_sat.scatter(gt_wx[0], gt_wy[0], marker='o', s=90,
+                               color='lime', edgecolors='k', lw=0.8, zorder=6,
+                               label='Start')
+                ax_sat.scatter(gt_wx[-1], gt_wy[-1], marker='s', s=90,
+                               color='red', edgecolors='k', lw=0.8, zorder=6,
+                               label='End')
+                if 'tercom_accepted_count' in df.columns:
+                    fix_rows = df[df['tercom_accepted_count'].diff().fillna(0) > 0]
+                    if not fix_rows.empty:
+                        fx, fy = _enu_to_web(fix_rows['est_x'].values,
+                                             fix_rows['est_y'].values)
+                        ax_sat.scatter(fx, fy, marker='+', s=60, color='yellow',
+                                       linewidths=1.8, zorder=5,
+                                       label='TERCOM Fix Applied')
+                try:
+                    ctx.add_basemap(ax_sat, crs='EPSG:3857',
+                                    source=ctx.providers.Esri.WorldImagery,
+                                    zoom=satellite_zoom, attribution_size=6)
+                except Exception as _te:
+                    ax_sat.text(0.5, 0.5, f'Satellite tiles unavailable:\n{_te}',
+                                transform=ax_sat.transAxes, ha='center', va='center',
+                                color='red', fontsize=9,
+                                bbox=dict(boxstyle='round', fc='lightyellow', alpha=0.9))
+                ax_sat.set_xlabel('Web Mercator X (m)', fontsize=9)
+                ax_sat.set_ylabel('Web Mercator Y (m)', fontsize=9)
+                ax_sat.legend(fontsize=8, loc='best', framealpha=0.85)
+                _section_label(ax_sat, 'XY Ground Track — Satellite Basemap')
+
+                pdf.savefig(fig, bbox_inches='tight')
+                plt.close(fig)
+            except ImportError:
+                pass  # contextily/pyproj not available; skip page silently
 
         # ── PAGE 4: Position Error Analysis ─────────────────────────────────
         fig = plt.figure(figsize=(11, 8.5))
@@ -1559,6 +1733,16 @@ def main():
                         help='Comma-separated figure formats (default: png)')
     parser.add_argument('--no-report', action='store_true',
                         help='Skip PDF report generation')
+    parser.add_argument('--origin-lat', type=float, default=None,
+                        help='Latitude of ENU frame origin (deg) — enables '
+                             'satellite-map trajectory plot (01b_trajectory_satellite)')
+    parser.add_argument('--origin-lon', type=float, default=None,
+                        help='Longitude of ENU frame origin (deg) — enables '
+                             'satellite-map trajectory plot (01b_trajectory_satellite)')
+    parser.add_argument('--satellite-zoom', type=int, default=17,
+                        help='Tile zoom level for satellite map (1-19, default: 17). '
+                             'Higher = more detail but more tiles to download. '
+                             'Use 15-16 for long flights, 17-18 for short/local flights.')
     args = parser.parse_args()
 
     if not os.path.isfile(args.csv):
@@ -1577,6 +1761,10 @@ def main():
 
     generators = [
         fig_trajectory_xy,
+        functools.partial(fig_trajectory_satellite,
+                          origin_lat=args.origin_lat,
+                          origin_lon=args.origin_lon,
+                          satellite_zoom=args.satellite_zoom),
         fig_position_error_time,
         fig_error_statistics,
         fig_covariance_consistency,
@@ -1595,7 +1783,8 @@ def main():
 
     print(f'\nGenerating {len(generators)} figures ...')
     for gen in generators:
-        name = gen.__name__.replace('fig_', '')
+        func_name = getattr(gen, '__name__', None) or getattr(gen, 'func', gen).__name__
+        name = func_name.replace('fig_', '')
         print(f'  {name}')
         try:
             gen(df, outdir)
@@ -1607,7 +1796,10 @@ def main():
         stats = compute_stats(df)
         print('Generating PDF report ...')
         try:
-            generate_pdf_report(df, stats, args.csv, outdir)
+            generate_pdf_report(df, stats, args.csv, outdir,
+                                origin_lat=args.origin_lat,
+                                origin_lon=args.origin_lon,
+                                satellite_zoom=args.satellite_zoom)
         except Exception as exc:
             print(f'  WARNING: PDF report failed — {exc}')
 
