@@ -123,10 +123,10 @@ $$
 $$
 
 3. Resolves global Terrain height ($h_{terrain}$) mapping:
-   - $h_{terrain} = h_{baro_{msl}} - h_{agl} - h_{offset_configuration}$ 
+   - $h_{terrain} = h_{\text{baro,msl}} - h_{\text{agl}} - h_{\text{offset}}$
 
 ### Step 3: Profile Collection and Windowing (`ProfileCollector` class)
-- Invokes `try_add_sample`. If metric distancing laws dictate (`distance > min_spacing`), a sample appends to the memory buffer array as a tuple storing $(h_{terrain}, \Delta x_{from_start}, \Delta y_{from_start}, timestamp)$.
+- Invokes `try_add_sample`. If metric distancing laws dictate (`distance > min_spacing`), a sample appends to the memory buffer array as a tuple storing $(h_{\text{terrain}},\, \Delta x_{\text{rel}},\, \Delta y_{\text{rel}},\, t)$.
 - When the buffer caps the user's `max_samples` profile density limit, it asserts readiness into `self._run_matching()`.
 
 ### Step 4: Activating Correlation Vector Matches (`match_profile`)
@@ -183,8 +183,8 @@ stateDiagram-v2
 Executes directly driven by synchronous physical `IMU` updates at native decimation rates:
 1. Retrieves high-speed dynamic kinematics from physical accelerometers ($\mathbf{a}_m$) and rate gyros ($\boldsymbol{\omega}_m$).
 2. Eliminates state drift biases:
-   - $\mathbf{a}_{corr} = \mathbf{a}_m - \mathbf{a}_{bias_k}$
-   - $\boldsymbol{\omega}_{corr} = \boldsymbol{\omega}_m - \boldsymbol{\omega}_{bias_k}$
+   - $\mathbf{a}_{corr} = \mathbf{a}_m - \mathbf{a}_{b,k}$
+   - $\boldsymbol{\omega}_{corr} = \boldsymbol{\omega}_m - \boldsymbol{\omega}_{b,k}$
 3. Integrates spatial quaternion matrices ($R_{(q)}$) mathematically shifting gravity structures onto absolute maps:
 
 $$
@@ -212,10 +212,10 @@ $$
 ### 4.4. Measurement Interrogation and Kalman Output (`update_xxx` routines)
 Executes asynchronously whenever disparate measuring tools signal metrics. Examples include $z_{xy}$ mapping TERCOM fixes against uncertainty $\mathbf{R}_{xy}$.
 1. **Jacobian Structure Configuration**: The script aligns standard arrays matching positional error matrix dependencies. Because Error States represent absolute values directly matched inside physical coordinates, $\mathbf{H}$ arrays evaluate completely linearly. A classic TERCOM positional mapping array formulates: `H[0,0] = 1` and `H[1,1] = 1`.
-2. **Measurement Assessment**: Formulates raw mathematical Innovation mappings comparing absolute expectations: $\mathbf{y} = \mathbf{z} - p_{predicted_xy}$.
+2. **Measurement Assessment**: Formulates raw mathematical Innovation mappings comparing absolute expectations: $\mathbf{y} = \mathbf{z} - \hat{\mathbf{p}}_{xy}$.
 3. **Optimal Gain Resolution**:
    - Solves measurement matrices structures: $\mathbf{S} = \mathbf{H} \mathbf{P} \mathbf{H}^T + \mathbf{R}$
-   - Checks normalized Mahalanobis conditions assuring Innovation validity bounds: `NIS = y * S^{-1} * y^T`
+   - Checks normalized Mahalanobis conditions assuring Innovation validity bounds: $\text{NIS} = \mathbf{y}^T \mathbf{S}^{-1} \mathbf{y}$
    - Formulates Kalman ratio evaluations determining exactly how thoroughly system integrations must respect incoming values: $\mathbf{K} = \mathbf{P} \mathbf{H}^T \mathbf{S}^{-1}$
 
 ### 4.5. Injection and Feedback State Cleansing
@@ -240,7 +240,7 @@ The Error-State Kalman Filter offers significant mathematical and computational 
 
 1. **Orientation Representation (Avoiding Gimbal Lock):**
    - The nominal state maintains the orientation using a **quaternion**, which is free of singularities (like gimbal lock).
-   - In a standard EKF, tracking the covariance of a 4D unit quaternion is mathematically problematic because the quaternion elements are constrained ($||q|| = 1$). 
+   - In a standard EKF, tracking the covariance of a 4D unit quaternion is mathematically problematic because the quaternion elements are constrained ($\|q\| = 1$).
    - The ESKF solves this by representing the **angular error as a minimal 3D rotation vector** ($\delta \boldsymbol{\theta}$). Since this error state is always close to zero, it completely avoids constraint violations and singularities.
 
 2. **Linear Error Dynamics:**
