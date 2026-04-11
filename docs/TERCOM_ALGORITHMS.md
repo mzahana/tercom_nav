@@ -118,15 +118,15 @@ Once synchronised input triggers `_cb_synced`, TERCOM extracts ground height:
    - **If Gimbaled (True):** `h_agl = raw_range` since the beam explicitly points physically downwards.
    - **If Body-Fixed (False):** The vehicle IMU quaternion ($q$) translates mathematically into roll ($\phi$) and pitch ($\theta$).
 
-     ```math
-     h_{agl} = raw\_range \times \cos(\phi) \times \cos(\theta)
-     ```
+$$
+     h_{agl} = raw_range \times \cos(\phi) \times \cos(\theta)
+$$
 
 3. Resolves global Terrain height ($h_{terrain}$) mapping:
-   - $h_{terrain} = h_{baro_{msl}} - h_{agl} - h_{offset\_configuration}$ 
+   - $h_{terrain} = h_{baro_{msl}} - h_{agl} - h_{offset_configuration}$ 
 
 ### Step 3: Profile Collection and Windowing (`ProfileCollector` class)
-- Invokes `try_add_sample`. If metric distancing laws dictate (`distance > min_spacing`), a sample appends to the memory buffer array as a tuple storing $(h_{terrain}, \Delta x_{from\_start}, \Delta y_{from\_start}, timestamp)$.
+- Invokes `try_add_sample`. If metric distancing laws dictate (`distance > min_spacing`), a sample appends to the memory buffer array as a tuple storing $(h_{terrain}, \Delta x_{from_start}, \Delta y_{from_start}, timestamp)$.
 - When the buffer caps the user's `max_samples` profile density limit, it asserts readiness into `self._run_matching()`.
 
 ### Step 4: Activating Correlation Vector Matches (`match_profile`)
@@ -138,9 +138,9 @@ Once synchronised input triggers `_cb_synced`, TERCOM extracts ground height:
 5. **Mask Deduplication**: If DEM limits span outside borders, or a pixel reads `-9999.0` it triggers `valid_mask = False`. Computes proportional valid path ratios.
 6. **Core MAD Evaluation**:
 
-   ```math
-   \text{MAD}_k = \frac{1}{\text{valid\_count}} \sum \left| \text{dem\_profiles}_{k} - h_{terrain} \right|
-   ```
+$$
+   \text{MAD}_k = \frac{1}{\text{valid_count}} \sum \left| \text{dem_profiles}_{k} - h_{terrain} \right|
+$$
 
 7. **Best Match Selection**: Computes the argmin determining identifying the absolute lowest difference score.
 
@@ -183,13 +183,13 @@ stateDiagram-v2
 Executes directly driven by synchronous physical `IMU` updates at native decimation rates:
 1. Retrieves high-speed dynamic kinematics from physical accelerometers ($\mathbf{a}_m$) and rate gyros ($\boldsymbol{\omega}_m$).
 2. Eliminates state drift biases:
-   - $\mathbf{a}_{corr} = \mathbf{a}_m - \mathbf{a}_{bias\_k}$
-   - $\boldsymbol{\omega}_{corr} = \boldsymbol{\omega}_m - \boldsymbol{\omega}_{bias\_k}$
+   - $\mathbf{a}_{corr} = \mathbf{a}_m - \mathbf{a}_{bias_k}$
+   - $\boldsymbol{\omega}_{corr} = \boldsymbol{\omega}_m - \boldsymbol{\omega}_{bias_k}$
 3. Integrates spatial quaternion matrices ($R_{(q)}$) mathematically shifting gravity structures onto absolute maps:
 
-   ```math
+$$
    \mathbf{a}_{enu} = \mathbf{R} \cdot \mathbf{a}_{corr} + \mathbf{g}_{enu}
-   ```
+$$
 
 4. Re-evaluates kinematics directly incrementing basic kinematic tracking values:
    - $\mathbf{p}_{k+1} = \mathbf{p}_k + \mathbf{v}_k \Delta t + 0.5 \mathbf{a}_{enu} \Delta t^2$
@@ -205,14 +205,14 @@ Simultaneously evaluates mathematical drift uncertainties through continuous tim
 2. Derives system noise covariance matrix $\mathbf{Q}$ mapping variances across temporal domains parameters constants (e.g. `accel_noise^2 * dt`).
 3. Executes traditional covariance integrations mathematically combining states:
 
-   ```math
+$$
    \mathbf{P}_{predict} = (\mathbf{I} + \mathbf{F}_x \Delta t) \mathbf{P} (\mathbf{I} + \mathbf{F}_x \Delta t)^T + \mathbf{Q}
-   ```
+$$
 
 ### 4.4. Measurement Interrogation and Kalman Output (`update_xxx` routines)
 Executes asynchronously whenever disparate measuring tools signal metrics. Examples include $z_{xy}$ mapping TERCOM fixes against uncertainty $\mathbf{R}_{xy}$.
 1. **Jacobian Structure Configuration**: The script aligns standard arrays matching positional error matrix dependencies. Because Error States represent absolute values directly matched inside physical coordinates, $\mathbf{H}$ arrays evaluate completely linearly. A classic TERCOM positional mapping array formulates: `H[0,0] = 1` and `H[1,1] = 1`.
-2. **Measurement Assessment**: Formulates raw mathematical Innovation mappings comparing absolute expectations: $\mathbf{y} = \mathbf{z} - p_{predicted\_xy}$.
+2. **Measurement Assessment**: Formulates raw mathematical Innovation mappings comparing absolute expectations: $\mathbf{y} = \mathbf{z} - p_{predicted_xy}$.
 3. **Optimal Gain Resolution**:
    - Solves measurement matrices structures: $\mathbf{S} = \mathbf{H} \mathbf{P} \mathbf{H}^T + \mathbf{R}$
    - Checks normalized Mahalanobis conditions assuring Innovation validity bounds: `NIS = y * S^{-1} * y^T`
@@ -228,9 +228,9 @@ The primary differentiator for the Error-State Kalman formulation executes insid
    - Adjusts internal IMU sensor biases mapping corrections directly eliminating fundamental drift properties.
 3. Overwrites existing algorithmic Uncertainty Variance Matrix formulas utilizing physically rigorous "Joseph-Form" stabilizing numerical algorithms ensuring perfectly conditioned symmetric matrices structure:
 
-   ```math
+$$
    \mathbf{P}_{new} = (\mathbf{I} - \mathbf{K}\mathbf{H}) \mathbf{P} (\mathbf{I} - \mathbf{K}\mathbf{H})^T + \mathbf{K}\mathbf{R}\mathbf{K}^T
-   ```
+$$
 
 4. **Mandatory Purge Validation**: Destroys spatial variance matrices ($\delta \mathbf{x} = 0$) entirely completing Error State evaluation loop. The routine proceeds fully normalized.
 
