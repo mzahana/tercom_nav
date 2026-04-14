@@ -675,6 +675,8 @@ def fig_health_metrics(df: pd.DataFrame, outdir: str):
         ('health_max_pos_std', 'Max Position σ (m)', '#E91E63'),
         ('health_innov_norm',  'Innovation Norm',    '#FF9800'),
         ('health_is_healthy',  'Is Healthy (1=Yes)', '#4CAF50'),
+        ('health_soft_reset_count', 'Soft Resets',   '#2196F3'),
+        ('health_hard_reset_count', 'Hard Resets',   '#F44336'),
     ]
     available = [(c, l, co) for c, l, co in cols_to_plot if c in df.columns]
     if not available:
@@ -789,6 +791,10 @@ def fig_summary_dashboard(df: pd.DataFrame, outdir: str):
         )
         if 'tercom_accepted_count' in df.columns:
             summary += f'   TERCOM Fixes: {int(df["tercom_accepted_count"].iloc[-1])}'
+        if 'health_soft_reset_count' in df.columns or 'health_hard_reset_count' in df.columns:
+            soft_r = int(df["health_soft_reset_count"].iloc[-1]) if 'health_soft_reset_count' in df.columns else 0
+            hard_r = int(df["health_hard_reset_count"].iloc[-1]) if 'health_hard_reset_count' in df.columns else 0
+            summary += f'   Resets (Soft: {soft_r} | Hard: {hard_r})'
         fig.suptitle(f'TERCOM Navigation — Performance Summary\n{summary}',
                      fontsize=13, y=1.01)
     else:
@@ -1445,7 +1451,7 @@ def generate_pdf_report(df: pd.DataFrame, stats: dict,
         _header_bar(fig, 'System Health & Flight Profile',
                     'Filter health metrics, state timeline, and vehicle speed')
 
-        gs = GridSpec(4, 1, figure=fig, top=0.88, bottom=0.07,
+        gs = GridSpec(6, 1, figure=fig, top=0.88, bottom=0.07,
                       left=0.07, right=0.97, hspace=0.55)
 
         # State timeline
@@ -1467,6 +1473,8 @@ def generate_pdf_report(df: pd.DataFrame, stats: dict,
             ('health_max_pos_std', 'Max Pos σ (m)', '#E91E63'),
             ('health_innov_norm',  'Innovation Norm', '#FF9800'),
             ('health_is_healthy',  'Healthy (1=Yes)', '#4CAF50'),
+            ('health_soft_reset_count', 'Soft Resets', '#2196F3'),
+            ('health_hard_reset_count', 'Hard Resets', '#F44336'),
         ]
         for ri, (col, ylabel, color) in enumerate(health_cols):
             ax_h = fig.add_subplot(gs[ri + 1])

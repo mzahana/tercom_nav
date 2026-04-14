@@ -796,7 +796,7 @@ class DiagnosticsNode(Node):
             'last_rejection_reason',
             # Filter state and health
             'filter_state',
-            'nis', 'health_max_pos_std', 'health_innov_norm', 'health_is_healthy',
+            'nis', 'health_max_pos_std', 'health_innov_norm', 'health_is_healthy', 'health_soft_reset_count', 'health_hard_reset_count',
         ])
         self._csv_t0_ns = None  # will be set on first row
         self.get_logger().info(f'Logging to CSV: {csv_file_path}')
@@ -829,6 +829,8 @@ class DiagnosticsNode(Node):
             max_pos_std    = self._health[1] if len(self._health) > 1 else 0.0
             innov_norm     = self._health[2] if len(self._health) > 2 else 0.0
             is_healthy     = self._health[3] if len(self._health) > 3 else 1.0
+            soft_reset_count = self._health[4] if len(self._health) > 4 else 0.0
+            hard_reset_count = self._health[5] if len(self._health) > 5 else 0.0
 
             # Timing
             ts_ns = est_msg.header.stamp.sec * 10**9 + est_msg.header.stamp.nanosec
@@ -872,7 +874,7 @@ class DiagnosticsNode(Node):
                 self._last_rejection_reason,
                 # Filter state and health
                 self._filter_state,
-                nis, max_pos_std, innov_norm, is_healthy,
+                nis, max_pos_std, innov_norm, is_healthy, soft_reset_count, hard_reset_count,
             ])
         except Exception as e:
             self.get_logger().warning(f'CSV write error: {e}')

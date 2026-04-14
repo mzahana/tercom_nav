@@ -134,6 +134,8 @@ class ESKFNode(Node):
         self._init_odom = None
         self._gps_init_start_s = None
         self._last_innov_norm = 0.0   # last TERCOM innovation ||z - Hx|| in metres
+        self._soft_reset_count = 0
+        self._hard_reset_count = 0
 
         # IMU decimation
         imu_rate = self.get_parameter('imu_rate_hz').value
@@ -424,6 +426,7 @@ class ESKFNode(Node):
             self._publish_state(self.STATE_RESETTING)
             self._eskf.reset_covariance()
             self._health_monitor.reset()
+            self._soft_reset_count += 1
             self.get_logger().info('Filter soft-reset: covariance inflated, biases zeroed')
             self._publish_state(self.STATE_RUNNING)
 
@@ -432,6 +435,7 @@ class ESKFNode(Node):
             self._gps_samples.clear()
             self._health_monitor.reset()
             self._eskf.initialized = False
+            self._hard_reset_count += 1
             self._publish_state(self.STATE_WAITING_GPS)
             self.get_logger().info('Filter hard-reset: re-acquiring GPS')
 
@@ -533,6 +537,8 @@ class ESKFNode(Node):
             float(np.max(pos_std)),
             float(innov_norm),
             float(is_healthy),
+            float(self._soft_reset_count),
+            float(self._hard_reset_count),
         ]
         self._pub_health.publish(health_msg)
 
@@ -582,6 +588,7 @@ class ESKFNode(Node):
         self._gps_samples.clear()
         self._health_monitor.reset()
         self._eskf.initialized = False
+        self._hard_reset_count += 1
         self._publish_state(self.STATE_WAITING_GPS)
         response.success = True
         response.message = 'Filter reset. Re-acquiring GPS...'
