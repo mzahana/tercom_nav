@@ -57,7 +57,7 @@
     # Adaptive sampling
     enable_adaptive_sampling: true
     adaptive_min_interval_s: 0.5
-    adaptive_max_interval_s: 5.0
+    adaptive_max_interval_s: 3.0
     adaptive_pixels_per_sample: 1.5
 
     # Rangefinder mounting: gimbal keeps beam vertical — no trig correction needed
@@ -76,14 +76,14 @@
     imu_rate_hz: 50.0
 
     # Process noise
-    accel_noise: 0.1
-    gyro_noise: 0.01
-    accel_bias_noise: 0.001
-    gyro_bias_noise: 0.0001
+    accel_noise: 0.25
+    gyro_noise: 0.02
+    accel_bias_noise: 0.02
+    gyro_bias_noise: 0.001
     bias_time_constant: 300.0
 
     # Measurement noise — tercom_noise_base = one pixel size for taif_test4
-    tercom_noise_base: 5.93
+    tercom_noise_base: 50.0
     baro_noise: 3.0
     baro_update_rate_hz: 1.0
     velocity_noise: 0.5
