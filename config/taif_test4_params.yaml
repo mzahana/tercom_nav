@@ -117,8 +117,13 @@
     log_to_csv: true
     csv_path: "/tmp/tercom_logs/"
     publish_dem_pointcloud: true
-    dem_pointcloud_decimation: 4
+    dem_pointcloud_decimation: 2
     dem_file: "/home/user/shared_volume/PX4-Autopilot/Tools/simulation/gz/models/taif_test4/textures/taif_test4_tercom_dem.tif"
+    # Satellite aerial image for DEM colorization in RViz.
+    # Bounds are the WGS84 geographic extent of the PNG: [west_lon, south_lat, east_lon, north_lat]
+    # Matches the coverage in taif_test4_tercom_dem.json (same tile area).
+    dem_satellite_image: "/home/user/shared_volume/PX4-Autopilot/Tools/simulation/gz/models/taif_test4/textures/taif_test4_aerial.png"
+    dem_satellite_bounds: [40.341796875, 21.248422235627014, 40.374755859375, 21.279137394108716]
     error_publish_rate_hz: 10.0
     path_publish_rate_hz: 2.0
     world_origin_lat: 21.2651

@@ -68,13 +68,14 @@ message_filters
 | `scipy` | Quaternion operations in ESKF |
 | `rasterio` | GeoTIFF DEM loading and CRS auto-detection |
 | `pyproj` | Coordinate reference system transformations (UTM ↔ WGS84) |
+| `Pillow` | Satellite PNG loading for DEM colorization in RViz (optional) |
 | `pandas` | CSV parsing for `analyze_tercom_log.py` |
 | `matplotlib` | Figure generation for `analyze_tercom_log.py` |
 
 Install Python dependencies:
 
 ```bash
-pip install numpy scipy rasterio pyproj pandas matplotlib
+pip install numpy scipy rasterio pyproj Pillow pandas matplotlib
 ```
 
 ### Hardware / Simulation
@@ -244,8 +245,10 @@ All parameters are set via the params YAML. The defaults are in `config/tercom_p
 | `log_to_csv` | `true` | Enable CSV logging |
 | `csv_path` | `"/tmp/tercom_logs/"` | Output directory for CSV files |
 | `publish_dem_pointcloud` | `true` | Publish DEM as PointCloud2 at startup |
-| `dem_pointcloud_decimation` | `4` | Publish every Nth DEM pixel |
+| `dem_pointcloud_decimation` | `4` | Publish every Nth DEM pixel (lower = denser cloud) |
 | `dem_file` | `""` | DEM file for point cloud generation |
+| `dem_satellite_image` | `""` | Optional path to aerial PNG; colors DEM cloud with satellite imagery instead of elevation colormap |
+| `dem_satellite_bounds` | `[0,0,0,0]` | WGS84 bounds of the PNG: `[west_lon, south_lat, east_lon, north_lat]`; required when `dem_satellite_image` is set |
 | `error_publish_rate_hz` | `10.0` | Rate for error metric topics (Hz) |
 | `path_publish_rate_hz` | `2.0` | Rate for path visualization topics (Hz) |
 | `world_origin_lat/lon/alt` | `0.0` | Must match other nodes |
@@ -345,7 +348,7 @@ All parameters are set via the params YAML. The defaults are in `config/tercom_p
 | `/tercom/diagnostics_node/ground_truth_path` | `nav_msgs/Path` | Accumulated ground truth trajectory |
 | `/tercom/diagnostics_node/tercom_fixes_viz` | `visualization_msgs/MarkerArray` | Sphere markers colored by match quality |
 | `/tercom/diagnostics_node/covariance_ellipse` | `visualization_msgs/Marker` | 2-sigma covariance ellipse |
-| `/tercom/diagnostics_node/dem_surface` | `sensor_msgs/PointCloud2` | DEM point cloud with jet colormap (latched, published once) |
+| `/tercom/diagnostics_node/dem_surface` | `sensor_msgs/PointCloud2` | DEM point cloud colored by satellite aerial image when `dem_satellite_image` is set, otherwise jet elevation colormap (latched, published once at startup) |
 | `/tercom/diagnostics_node/error_arrow` | `visualization_msgs/MarkerArray` | Arrow marker showing current position error vector |
 | `/tercom/diagnostics_node/error_colored_path` | `visualization_msgs/MarkerArray` | Estimated path line colored by instantaneous error magnitude |
 | `/tercom/diagnostics_node/rejected_fixes_viz` | `visualization_msgs/MarkerArray` | Markers for rejected TERCOM fixes |
@@ -460,7 +463,7 @@ rviz2 -d $(ros2 pkg prefix tercom_nav)/share/tercom_nav/config/rviz_tercom.rviz
 ```
 
 Key displays:
-- DEM surface point cloud (jet colormap by elevation)
+- DEM surface point cloud — colored by satellite aerial imagery when `dem_satellite_image` is configured, otherwise jet colormap by elevation; rendered as filled squares sized to cover inter-point spacing
 - Estimated path and ground truth path
 - TERCOM fix markers (color-coded by quality)
 - Profile collection path

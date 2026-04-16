@@ -49,6 +49,8 @@ class DiagnosticsNode(Node):
         self.declare_parameter('publish_dem_pointcloud', True)
         self.declare_parameter('dem_pointcloud_decimation', 4)
         self.declare_parameter('dem_file', '')
+        self.declare_parameter('dem_satellite_image', '')
+        self.declare_parameter('dem_satellite_bounds', [0.0, 0.0, 0.0, 0.0])
         self.declare_parameter('error_publish_rate_hz', 10.0)
         self.declare_parameter('path_publish_rate_hz', 2.0)
         self.declare_parameter('world_origin_lat', 0.0)
@@ -672,92 +674,159 @@ class DiagnosticsNode(Node):
         self._pub_cov_ellipse.publish(marker)
 
     def _publish_dem_pointcloud_once(self):
-        """Generate DEM as PointCloud2 and publish with transient local QoS."""
+        """Generate DEM as PointCloud2 and publish with transient local QoS.
+
+        When ``dem_satellite_image`` and ``dem_satellite_bounds`` are set, each
+        point is colored by sampling the aerial PNG at the corresponding lon/lat
+        coordinate (UTM → WGS84 via pyproj, then linear mapping into the image).
+        Falls back to the jet elevation colormap if the image cannot be loaded.
+        """
         dem_file = self.get_parameter('dem_file').value
         if not dem_file:
             return
 
         try:
+            import array as arr
+            import numpy as np
             from tercom_nav.core.dem_manager import DEMManager
             from sensor_msgs.msg import PointField
-            import struct
 
             dem = DEMManager(dem_file)
             decimation = self.get_parameter('dem_pointcloud_decimation').value
+            satellite_image = self.get_parameter('dem_satellite_image').value
+            satellite_bounds = list(self.get_parameter('dem_satellite_bounds').value)
 
             world_lat = self.get_parameter('world_origin_lat').value
             world_lon = self.get_parameter('world_origin_lon').value
             world_alt = self.get_parameter('world_origin_alt').value
-
             origin = compute_utm_origin(world_lat, world_lon, world_alt) if world_lat != 0.0 else None
 
-            points_data = []
-            elev_min, elev_max = dem.elevation_range
-            elev_range = max(elev_max - elev_min, 1.0)
+            # --- Build decimated coordinate grids (vectorized) ---
+            row_idx = np.arange(0, dem.height, decimation, dtype=np.int32)
+            col_idx = np.arange(0, dem.width, decimation, dtype=np.int32)
+            col_grid, row_grid = np.meshgrid(col_idx, row_idx)
 
-            for row in range(0, dem.height, decimation):
-                for col in range(0, dem.width, decimation):
-                    elev = float(dem.elevation[row, col])
-                    if elev <= dem.nodata_value:
-                        continue
+            eas = (dem.transform.c + col_grid * dem.transform.a).astype(np.float64)
+            nos = (dem.transform.f + row_grid * dem.transform.e).astype(np.float64)
+            els = dem.elevation[row_grid, col_grid].astype(np.float64)
 
-                    easting = dem.transform.c + col * dem.transform.a
-                    northing = dem.transform.f + row * dem.transform.e
+            valid = els > dem.nodata_value
+            eas = eas[valid]
+            nos = nos[valid]
+            els = els[valid]
 
-                    if origin:
-                        enu = utm_to_local_enu(
-                            easting, northing, elev,
-                            origin['easting'], origin['northing'], origin['alt']
-                        )
-                        x, y, z = float(enu[0]), float(enu[1]), float(enu[2])
-                    else:
-                        x, y, z = easting, northing, elev
-
-                    # Jet colormap approximation
-                    t = (elev - elev_min) / elev_range
-                    r = max(0.0, min(1.0, 1.5 - abs(4 * t - 3)))
-                    g = max(0.0, min(1.0, 1.5 - abs(4 * t - 2)))
-                    b = max(0.0, min(1.0, 1.5 - abs(4 * t - 1)))
-                    rgb = (int(r * 255) << 16) | (int(g * 255) << 8) | int(b * 255)
-                    rgb_float = struct.unpack('f', struct.pack('I', rgb))[0]
-
-                    points_data.append(struct.pack('ffff', x, y, z, rgb_float))
-
-            if not points_data:
+            if len(eas) == 0:
                 return
+
+            # --- XYZ in the output frame ---
+            if origin:
+                xs = (eas - origin['easting']).astype(np.float32)
+                ys = (nos - origin['northing']).astype(np.float32)
+                zs = (els - origin['alt']).astype(np.float32)
+            else:
+                xs = eas.astype(np.float32)
+                ys = nos.astype(np.float32)
+                zs = els.astype(np.float32)
+
+            # --- RGB: try satellite image, fall back to jet colormap ---
+            rgb_packed = None
+
+            if (satellite_image
+                    and len(satellite_bounds) == 4
+                    and satellite_bounds[2] > satellite_bounds[0]):
+                try:
+                    from PIL import Image
+                    from pyproj import Transformer
+
+                    sat_img = Image.open(satellite_image).convert('RGB')
+                    sat_arr = np.array(sat_img, dtype=np.uint8)
+                    sat_h, sat_w = sat_arr.shape[:2]
+
+                    # UTM → WGS84 lon/lat
+                    tr = Transformer.from_crs(
+                        f'EPSG:{dem.crs.to_epsg()}', 'EPSG:4326', always_xy=True
+                    )
+                    lons, lats = tr.transform(eas, nos)
+
+                    west_lon, south_lat, east_lon, north_lat = satellite_bounds
+                    px_cols = np.clip(
+                        ((lons - west_lon) / (east_lon - west_lon) * sat_w).astype(np.int32),
+                        0, sat_w - 1,
+                    )
+                    px_rows = np.clip(
+                        ((north_lat - lats) / (north_lat - south_lat) * sat_h).astype(np.int32),
+                        0, sat_h - 1,
+                    )
+                    rgb_u8 = sat_arr[px_rows, px_cols]  # (N, 3) uint8
+                    rgb_packed = (
+                        (rgb_u8[:, 0].astype(np.uint32) << 16)
+                        | (rgb_u8[:, 1].astype(np.uint32) << 8)
+                        | rgb_u8[:, 2].astype(np.uint32)
+                    )
+                    self.get_logger().info(
+                        f'DEM colored with satellite image ({sat_w}×{sat_h} px)'
+                    )
+                except ImportError:
+                    self.get_logger().warn(
+                        'Pillow not installed; falling back to elevation colormap. '
+                        'Install with: pip install Pillow'
+                    )
+                except Exception as exc:
+                    self.get_logger().warn(
+                        f'Satellite image load failed ({exc}); using elevation colormap'
+                    )
+
+            if rgb_packed is None:
+                # Jet colormap fallback
+                elev_min, elev_max = dem.elevation_range
+                elev_range = max(elev_max - elev_min, 1.0)
+                t = (els - elev_min) / elev_range
+                r_ch = np.clip(1.5 - np.abs(4.0 * t - 3.0), 0.0, 1.0)
+                g_ch = np.clip(1.5 - np.abs(4.0 * t - 2.0), 0.0, 1.0)
+                b_ch = np.clip(1.5 - np.abs(4.0 * t - 1.0), 0.0, 1.0)
+                rgb_packed = (
+                    (r_ch * 255).astype(np.uint32) << 16
+                    | (g_ch * 255).astype(np.uint32) << 8
+                    | (b_ch * 255).astype(np.uint32)
+                )
+
+            # Bit-cast uint32 → float32 (standard PointCloud2 packed-RGB convention)
+            rgb_float = rgb_packed.astype(np.uint32).view(np.float32)
+
+            # --- Assemble PointCloud2 ---
+            cloud = np.column_stack([xs, ys, zs, rgb_float]).astype(np.float32)
+            n_points = cloud.shape[0]
 
             pc2 = PointCloud2()
             pc2.header.frame_id = 'map'
             pc2.header.stamp = self.get_clock().now().to_msg()
             pc2.height = 1
-            pc2.width = len(points_data)
+            pc2.width = n_points
             pc2.is_dense = True
             pc2.is_bigendian = False
             pc2.point_step = 16
-            pc2.row_step = pc2.point_step * pc2.width
+            pc2.row_step = 16 * n_points
 
             fields = []
-            for name, offset, datatype in [
-                ('x', 0, PointField.FLOAT32),
-                ('y', 4, PointField.FLOAT32),
-                ('z', 8, PointField.FLOAT32),
+            for fname, foffset, ftype in [
+                ('x',   0,  PointField.FLOAT32),
+                ('y',   4,  PointField.FLOAT32),
+                ('z',   8,  PointField.FLOAT32),
                 ('rgb', 12, PointField.FLOAT32),
             ]:
                 f = PointField()
-                f.name = name
-                f.offset = offset
-                f.datatype = datatype
+                f.name = fname
+                f.offset = foffset
+                f.datatype = ftype
                 f.count = 1
                 fields.append(f)
             pc2.fields = fields
 
-            import array as arr
-            all_data = b''.join(points_data)
-            pc2.data = arr.array('B', all_data).tolist()
+            pc2.data = arr.array('B', cloud.tobytes()).tolist()
 
             self._pub_dem_cloud.publish(pc2)
             self.get_logger().info(
-                f'DEM PointCloud2 published: {len(points_data)} points '
+                f'DEM PointCloud2 published: {n_points} points '
                 f'(decimation={decimation})'
             )
         except Exception as e:
