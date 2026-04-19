@@ -54,20 +54,20 @@ stateDiagram-v2
 Detailed algorithmic loop of the Error-State Kalman Filter, outlining nominal state kinematics and error state covariance updates.
 ```mermaid
 graph TD
-    A[Start Loop] --> B{Data Received?}
-    B -- IMU Msg --> C[Predict Step]
-    C --> C1[Nominal State Integration]
-    C1 --> C2[Error Covariance Prop P = F*P*F'+Q]
+    A["Start Loop"] --> B{"Data Received?"}
+    B -->|IMU Msg| C["Predict Step"]
+    C --> C1["Nominal State Integration"]
+    C1 --> C2["Error Covariance Prop P = F*P*F'+Q"]
     C2 --> B
     
-    B -- TERCOM Fix / Baro / Vel --> D[Update Step]
-    D --> D1[Calc Innovation y = z - H*x]
-    D1 --> D2[Check NIS & Health bounds]
-    D2 --> D3[Calculate Kalman Gain K = P*H'*inv(H*P*H'+R)]
-    D3 --> D4[Error State Correction dx = K*y]
-    D4 --> D5[Inject dx into Nominal State p, v, q, b]
-    D5 --> D6[Update Covariance P = (I-KH)P(I-KH)' + KRK']
-    D6 --> D7[Reset Error State dx = 0]
+    B -->|TERCOM Fix / Baro / Vel| D["Update Step"]
+    D --> D1["Calc Innovation y = z - H*x"]
+    D1 --> D2["Check NIS & Health bounds"]
+    D2 --> D3["Calculate Kalman Gain K = P*H'*inv(H*P*H'+R)"]
+    D3 --> D4["Error State Correction dx = K*y"]
+    D4 --> D5["Inject dx into Nominal State p, v, q, b"]
+    D5 --> D6["Update Covariance P = (I-KH)P(I-KH)' + KRK'"]
+    D6 --> D7["Reset Error State dx = 0"]
     D7 --> B
 ```
 
