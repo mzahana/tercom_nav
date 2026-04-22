@@ -51,6 +51,7 @@ class DiagnosticsNode(Node):
         self.declare_parameter('dem_file', '')
         self.declare_parameter('dem_satellite_image', '')
         self.declare_parameter('dem_satellite_bounds', [0.0, 0.0, 0.0, 0.0])
+        self.declare_parameter('dem_pos_offset', [0.0, 0.0, 0.0])
         self.declare_parameter('error_publish_rate_hz', 10.0)
         self.declare_parameter('path_publish_rate_hz', 2.0)
         self.declare_parameter('world_origin_lat', 0.0)
@@ -719,14 +720,16 @@ class DiagnosticsNode(Node):
                 return
 
             # --- XYZ in the output frame ---
+            dem_offset = self.get_parameter('dem_pos_offset').value
+            
             if origin:
-                xs = (eas - origin['easting']).astype(np.float32)
-                ys = (nos - origin['northing']).astype(np.float32)
-                zs = (els - origin['alt']).astype(np.float32)
+                xs = (eas - origin['easting'] + dem_offset[0]).astype(np.float32)
+                ys = (nos - origin['northing'] + dem_offset[1]).astype(np.float32)
+                zs = (els - origin['alt'] + dem_offset[2]).astype(np.float32)
             else:
-                xs = eas.astype(np.float32)
-                ys = nos.astype(np.float32)
-                zs = els.astype(np.float32)
+                xs = (eas + dem_offset[0]).astype(np.float32)
+                ys = (nos + dem_offset[1]).astype(np.float32)
+                zs = (els + dem_offset[2]).astype(np.float32)
 
             # --- RGB: try satellite image, fall back to jet colormap ---
             rgb_packed = None
