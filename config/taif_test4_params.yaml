@@ -124,6 +124,24 @@
     # Matches the coverage in taif_test4_tercom_dem.json (same tile area).
     dem_satellite_image: "/home/user/shared_volume/PX4-Autopilot/Tools/simulation/gz/models/taif_test4/textures/taif_test4_aerial.png"
     dem_satellite_bounds: [40.341796875, 21.248422235627014, 40.374755859375, 21.279137394108716]
+    # Align the DEM pointcloud with the Gazebo heightmap and the drone.
+    # See MAP_OFFSET.md for the derivation.
+    #
+    #   dem_pos_offset_xy = heightmap.<pos>_xy - (DEM_center_UTM - world_origin_UTM)
+    #                     = (71.26, -70.86) - (+424.155, -143.123)
+    #                     = (-352.895, 72.263)
+    #
+    # The Gazebo SDF places the heightmap mesh at <pos>(71.26, -70.86, 0), but
+    # the .tif's georeferenced centre sits at UTM (640924.25, 2351946.59),
+    # which is (+424.155 E, -143.123 N) from world_origin UTM (640500.10,
+    # 2352089.71). Without this correction the published DEM pointcloud lands
+    # ~424 m east / 143 m south of the actual Gazebo terrain and drone.
+    #
+    #   Z : world_origin_alt - DEM_min_elev = 1859.7 - 1725.4 = 134.3 m.
+    #       diagnostics_node computes z = elev - world_origin_alt, which puts
+    #       the DEM 134.3 m too low vs. the Gazebo-Z-referenced map frame
+    #       (where map.z = 0 ↔ DEM_min MSL). Adding 134.3 m raises it back.
+    dem_pos_offset: [-352.895, 72.263, 134.3]
     error_publish_rate_hz: 10.0
     path_publish_rate_hz: 2.0
     world_origin_lat: 21.2651
